@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Companion",
+  "version": "0.5.0",
+  "homepage_url": "https://ersagun.com.tr/en/lab/chatgpt-companion/",
+  "description": "Free Chrome extension for local ChatGPT chat folders, search, archive, delete, and export.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "ChatGPT Companion",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "toggle-companion": {
+      "suggested_key": { "default": "Ctrl+Shift+Y" },
+      "description": "Open ChatGPT Companion"
+    },
+    "open-chat-manager": {
+      "suggested_key": { "default": "Ctrl+Shift+F" },
+      "description": "Search ChatGPT conversations"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": [
+        "locales/tr.js",
+        "locales/en.js",
+        "src/core/bootstrap.js",
+        "src/core/models.js",
+        "src/core/indexed-db.js",
+        "src/core/repository.js",
+        "src/platform/chatgpt-adapter.js",
+        "src/ui/dialogs.js",
+        "src/features/feature-registry.js",
+        "src/features/organization.js",
+        "src/features/search.js",
+        "src/features/prompts.js",
+        "src/features/bookmarks.js",
+        "src/features/media.js",
+        "src/features/insights.js",
+        "src/features/export.js",
+        "src/features/backup.js",
+        "src/features/settings.js",
+        "src/features/page-tools.js",
+        "src/ui/toolbox.js",
+        "src/content.js"
+      ],
+      "css": ["src/ui/page-tools.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/ui/toolbox.css"],
+      "matches": ["https://chatgpt.com/*"]
+    }
+  ]
+}

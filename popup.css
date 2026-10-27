@@ -1,0 +1,16 @@
+:root { color-scheme: light dark; font: 14px/1.45 system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 285px; color: #e9edf4; background: #11151d; }
+main { padding: 16px; }
+header { display: flex; align-items: center; gap: 11px; margin-bottom: 16px; }
+.mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: #ab8bff; color: #171224; font-weight: 800; }
+h1 { margin: 0; font-size: 15px; }
+p { margin: 3px 0 0; color: #a6adbb; font-size: 12px; }
+button { display: block; width: 100%; border: 1px solid #3b4351; border-radius: 9px; padding: 9px 10px; margin: 8px 0; color: inherit; background: #1b202b; cursor: pointer; text-align: left; }
+button:hover { background: #272e3b; }
+button.primary { background: #ab8bff; border-color: #ab8bff; color: #171224; font-weight: 700; text-align: center; }
+button.subtle { border-color: transparent; color: #b9c0ce; background: transparent; font-size: 12px; }
+.rule { height: 1px; background: #343b47; margin: 12px 0; }
+#status { min-height: 18px; }
+a { display: inline-block; margin-top: 8px; color: #c3b1ff; text-decoration: none; font-size: 12px; }
+a:hover { text-decoration: underline; }
