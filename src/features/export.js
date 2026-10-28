@@ -82,15 +82,37 @@
     return download(new Blob([contentFor(record, format)], { type: mimeFor(format) }), `${safeName(record.title)}.${extensionFor(format)}`);
   }
 
+  async function readExportRecord(id) {
+    let sourceError = null;
+    try {
+      const record = await CC.adapter.fetchConversationForIndex(id);
+      if (record?.messages?.length) return record;
+      sourceError = new Error("ChatGPT sohbetinde dışa aktarılabilir ileti bulunamadı.");
+    } catch (error) { sourceError = error; }
+    if (CC.adapter.getCurrentConversationId() === id) {
+      try {
+        const visible = await CC.adapter.readCurrentConversation();
+        if (visible?.messages?.length) return visible;
+      } catch (error) { sourceError ||= error; }
+    }
+    throw new Error(sourceError?.message || "Sohbet içeriği okunamadı.");
+  }
+
   async function exportCurrent(format = "markdown") {
-    const record = await CC.adapter.readCurrentConversation();
-    if (!record) return { ok: false, reason: "Açık sohbette dışa aktarılacak içerik bulunamadı." };
-    const extension = extensionFor(format);
-    const blob = new Blob([contentFor(record, format)], { type: mimeFor(format) });
-    CC.state.pendingDownload = { blob, filename: `${safeName(record.title)}.${extension}`, initialUrl: `${location.pathname}${location.search}${location.hash}` };
-    CC.ui.open("export");
-    CC.ui.toast("Dosya hazır. Kaydetmek için İndir düğmesine tıklayın.");
-    return { ok: true, filename: CC.state.pendingDownload.filename };
+    const id = CC.adapter.getCurrentConversationId();
+    if (!id) return { ok: false, reason: "Önce dışa aktarmak istediğiniz sohbeti ChatGPT’de açın." };
+    CC.state.pendingDownload = null;
+    try {
+      const record = await readExportRecord(id);
+      const extension = extensionFor(format);
+      const blob = new Blob([contentFor(record, format)], { type: mimeFor(format) });
+      CC.state.pendingDownload = { blob, filename: `${safeName(record.title)}.${extension}`, initialUrl: `${location.pathname}${location.search}${location.hash}` };
+      CC.ui.open("export");
+      CC.ui.toast("Dosya hazır. Dışa aktarma bölümündeki ‘Dosyayı indir’ düğmesine basın.");
+      return { ok: true, filename: CC.state.pendingDownload.filename };
+    } catch (error) {
+      return { ok: false, reason: error?.message || "Sohbet dışa aktarılamadı." };
+    }
   }
 
   async function exportSelection(ids, format = "zip", options = {}) {
@@ -147,24 +169,15 @@
         return;
       }
       const expected = job.ids[job.cursor];
-      if (CC.adapter.getCurrentConversationId() !== expected) {
-        const opened = await CC.adapter.openConversation(expected);
-        if (!opened) throw new Error("Seçilen sohbet ChatGPT arayüzünde açılamadı.");
-        CC.ui.open("manage");
-        setTimeout(() => continueExportJob(), 1200);
-        return;
-      }
-      const record = await CC.adapter.readCurrentConversation();
-      if (!record?.messages?.length) throw new Error("Bir sohbetin görünür mesajları okunamadı; işlem durduruldu.");
+      const record = await readExportRecord(expected);
+      if (!record?.messages?.length) throw new Error("Seçilen sohbette dışa aktarılabilir ileti bulunamadı.");
       await CC.tempStore.save(job.id, record);
       job = { ...job, cursor: job.cursor + 1, completed: job.completed + 1 };
       await CC.repository.saveJob(job);
       if (job.cursor < job.ids.length) {
-        const opened = await CC.adapter.openConversation(job.ids[job.cursor]);
-        if (!opened) throw new Error("Sonraki sohbet açılamadı.");
-        CC.ui.open("manage");
-        setTimeout(() => continueExportJob(), 1200);
-      } else setTimeout(() => continueExportJob(), 200);
+        if (CC.state.currentView === "manage" && CC.state.panel && !CC.state.panel.hidden) await CC.ui.render("manage");
+        setTimeout(() => continueExportJob(), 100);
+      } else setTimeout(() => continueExportJob(), 100);
     } catch (error) {
       const job = await CC.repository.getJob();
       if (job?.id) await CC.tempStore.clear(job.id).catch(() => {});
