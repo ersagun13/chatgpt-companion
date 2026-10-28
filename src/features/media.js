@@ -10,84 +10,120 @@
     try { return new URL(url, location.href).origin === location.origin ? "include" : "omit"; }
     catch { return "omit"; }
   }
-  async function refreshImageUrl(item) {
+  async function refreshMediaUrl(item) {
     const record = await CC.adapter.fetchConversationForIndex(item.conversationId);
     const message = record.messages.find((entry) => entry.id === item.messageId);
-    const url = message?.images?.find((candidate) => candidate !== item.url);
-    if (!url) return null;
+    const media = message?.media?.find((candidate) => candidate.kind === item.kind && candidate.url !== item.url) || (item.kind === "image" ? message?.images?.filter((url) => url !== item.url).map((url) => ({ url, kind: "image" }))[0] : null);
+    if (!media) return null;
     await CC.messageIndex.save([{ ...message, title: record.title || item.title }]);
-    return { ...item, url, prompt: message.text || item.prompt, title: record.title || item.title };
+    return { ...item, ...media, prompt: message.text || item.prompt, title: record.title || item.title };
   }
 
   CC.media = {
     async downloadItems(items) {
+      if (items.length > 50) return CC.ui.toast("Her ZIP için en fazla 50 medya öğesi seçin. Listeyi daraltıp kalanları ayrı bir indirmede alın.", "error");
       const files = [];
+      let failed = 0;
       for (const [index, item] of items.entries()) {
         try {
           let target = item;
           let response = await fetch(target.url, { credentials: requestCredentials(target.url), cache: "no-store", referrerPolicy: "no-referrer" });
           if (!response.ok) {
-            const refreshed = await refreshImageUrl(item).catch(() => null);
+            const refreshed = await refreshMediaUrl(item).catch(() => null);
             if (refreshed) { target = refreshed; response = await fetch(target.url, { credentials: requestCredentials(target.url), cache: "no-store", referrerPolicy: "no-referrer" }); }
           }
-          if (!response.ok) continue;
+          if (!response.ok) { failed++; continue; }
           const blob = await response.blob();
-          const ext = blob.type.split("/")[1]?.replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
+          const ext = blob.type.split("/")[1]?.replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "") || ({ image: "jpg", video: "mp4", audio: "m4a", file: "bin" }[target.kind] || "bin");
           files.push({ name: filenameFor(target, index, ext), data: new Uint8Array(await blob.arrayBuffer()) });
-        } catch {}
+        } catch { failed++; }
       }
-      if (!files.length) return CC.ui.toast("İndirilebilir görsel bulunamadı. Bazı ChatGPT bağlantıları süresi dolmuş olabilir.", "error");
-      await CC.exporter.downloadZipFiles(files, `chatgpt-gorselleri-${new Date().toISOString().slice(0, 10)}.zip`);
+      if (!files.length) return CC.ui.toast("İndirilebilir medya bulunamadı. Bazı ChatGPT bağlantıları süresi dolmuş olabilir.", "error");
+      await CC.exporter.downloadZipFiles(files, `chatgpt-medya-${new Date().toISOString().slice(0, 10)}.zip`);
+      if (failed) CC.ui.toast(`${files.length} medya indirildi; ${failed} öğe bağlantısı kullanılamadı.`, "error");
     }
   };
 
   CC.features.register({ id: "media", titleKey: "media", async render(container) {
-    container.append(el("div", { class: "cc-view-heading" }, [el("div", {}, [el("span", { class: "cc-eyebrow", text: "GÖRSEL ARŞİVİ" }), el("h2", { text: "Medya galerisi" }), el("p", { class: "cc-muted", text: "Dizine eklenmiş sohbetlerdeki bağlantılı görselleri bul ve toplu indir." })]), el("span", { class: "cc-view-icon", text: "▧" })]));
-    container.append(el("aside", { class: "cc-note", text: CC.tr("mediaPrivacyNotice", "Opening this gallery loads image previews from their original URLs. Cross-site requests omit session credentials and referrer information; the media host can still see your network address.") }));
-    const [all, favorites] = await Promise.all([CC.messageIndex.media(), CC.repository.getMediaFavorites()]);
+    container.append(el("div", { class: "cc-view-heading" }, [el("div", {}, [el("span", { class: "cc-eyebrow", text: "YEREL MEDYA ARŞİVİ" }), el("h2", { text: "Medya galerisi" }), el("p", { class: "cc-muted", text: "Dizine eklenmiş sohbetlerdeki görsel, video, ses ve dosya bağlantılarını bul, seç ve indir." })]), el("span", { class: "cc-view-icon", text: "▧" })]));
+    container.append(el("aside", { class: "cc-note", text: "Önizleme ve indirme özgün medya adresinden yapılır. Siteler arası isteklerde oturum bilgisi ve yönlendiren sayfa adresi gönderilmez; medya sunucusu yine de ağ adresinizi görebilir. Gizleme yalnız bu cihazdaki galeriyi etkiler." }));
+    const [all, savedFavorites, savedHidden] = await Promise.all([CC.messageIndex.media(), CC.repository.getMediaFavorites(), CC.repository.getHiddenMedia()]);
     const unique = [...new Map(all.filter((item) => /^https?:\/\//i.test(item.url)).map((item) => [item.url, item])).values()];
-    const query = el("input", { class: "cc-input", type: "search", placeholder: "Sohbet, görsel istemi veya bağlantı ara…" });
+    const favorites = new Set(savedFavorites), hidden = new Set(savedHidden), selected = new Set();
+    const query = el("input", { class: "cc-input", type: "search", placeholder: "Sohbet, açıklama veya bağlantı ara…" });
     const favoriteOnly = el("label", { class: "cc-checkline" });
     const favoriteCheck = el("input", { type: "checkbox" }); favoriteOnly.append(favoriteCheck, document.createTextNode(" Yalnızca favoriler"));
-    const download = el("button", { class: "cc-button cc-primary", text: "Görselleri ZIP indir" });
-    const status = el("p", { class: "cc-muted", text: `${unique.length} görsel bağlantısı · ${favorites.length} favori` });
+    const hiddenOnly = el("label", { class: "cc-checkline" });
+    const hiddenCheck = el("input", { type: "checkbox" }); hiddenOnly.append(hiddenCheck, document.createTextNode(" Gizlenenleri de göster"));
+    const selectVisible = el("button", { class: "cc-button cc-small", text: "Görünenleri seç" });
+    const download = el("button", { class: "cc-button cc-primary", text: "Seçilileri ZIP indir" });
+    const status = el("p", { class: "cc-muted" });
     const grid = el("div", { class: "cc-media-grid" });
-    container.append(query, favoriteOnly, download, status, grid);
+    container.append(query, favoriteOnly, hiddenOnly, el("div", { class: "cc-row wrap" }, [selectVisible, download]), status, grid);
     function draw() {
       grid.replaceChildren();
       const term = CC.normalize(query.value);
-      const items = unique.filter((item) => (!favoriteCheck.checked || favorites.includes(item.url)) && (!term || CC.normalize(`${item.title} ${item.prompt || ""} ${item.url}`).includes(term)));
-      status.textContent = `${items.length} görsel · ${favorites.length} favori`;
-      if (!items.length) { grid.append(el("p", { class: "cc-empty", text: all.length ? "Filtreye uygun görsel bulunamadı." : "Önce arama bölümünden sohbetleri dizine ekleyin. ChatGPT görselleri bağlantı olarak veriyorsa burada görünür." })); return; }
+      const items = unique.filter((item) => (hiddenCheck.checked || !hidden.has(item.url)) && (!favoriteCheck.checked || favorites.has(item.url)) && (!term || CC.normalize(`${item.title} ${item.prompt || ""} ${item.url}`).includes(term)));
+      status.textContent = `${items.length} öğe · ${favorites.size} favori · ${hidden.size} gizli · ${selected.size} seçili`;
+      if (!items.length) { grid.append(el("p", { class: "cc-empty", text: all.length ? "Filtreye uygun medya bulunamadı." : "Önce arama bölümünden sohbetleri dizine ekleyin. ChatGPT'den alınabilen medya bağlantıları burada görünür." })); return; }
       for (const [index, item] of items.entries()) {
         const card = el("article", { class: "cc-media-card" });
-        const image = el("img", { loading: "lazy", alt: `${item.title} sohbetindeki görsel` });
-        image.referrerPolicy = "no-referrer";
-        image.crossOrigin = "anonymous";
-        image.addEventListener("error", async () => {
-          image.hidden = true; card.classList.add("cc-media-expired");
-          const refreshed = await refreshImageUrl(item).catch(() => null);
-          if (!refreshed) return;
-          item.url = refreshed.url; item.prompt = refreshed.prompt; item.title = refreshed.title;
-          const favoriteIndex = favorites.indexOf(image.dataset.originalUrl || "");
-          if (favoriteIndex >= 0) { favorites[favoriteIndex] = refreshed.url; await CC.repository.saveMediaFavorites(favorites); }
-          card.classList.remove("cc-media-expired"); image.hidden = false; image.src = refreshed.url;
-        }, { once: true });
-        image.dataset.originalUrl = item.url;
-        image.src = item.url;
+        const type = ["image", "video", "audio", "file"].includes(item.kind) ? item.kind : "image";
+        let preview;
+        if (type === "video" || type === "audio") {
+          preview = el(type, { controls: true, preload: "none", "aria-label": `${item.title} sohbetindeki ${type === "video" ? "video" : "ses"}` });
+          preview.src = item.url; preview.crossOrigin = "anonymous"; preview.referrerPolicy = "no-referrer";
+        } else if (type === "file") {
+          preview = el("a", { class: "cc-media-file-link", text: "Dosyayı yeni sekmede aç ↗", href: item.url, target: "_blank", rel: "noopener noreferrer" });
+        } else {
+          preview = el("img", { loading: "lazy", alt: `${item.title} sohbetindeki görsel` });
+          preview.referrerPolicy = "no-referrer"; preview.crossOrigin = "anonymous"; preview.src = item.url;
+          preview.addEventListener("error", async () => {
+            preview.hidden = true; card.classList.add("cc-media-expired");
+            const refreshed = await refreshMediaUrl(item).catch(() => null);
+            if (!refreshed) return;
+            const previousUrl = item.url;
+            const wasSelected = selected.has(previousUrl);
+            Object.assign(item, refreshed);
+            if (favorites.delete(previousUrl)) favorites.add(item.url);
+            if (hidden.delete(previousUrl)) hidden.add(item.url);
+            if (wasSelected) { selected.delete(previousUrl); selected.add(item.url); }
+            await Promise.all([CC.repository.saveMediaFavorites([...favorites]), CC.repository.saveHiddenMedia([...hidden])]);
+            card.classList.remove("cc-media-expired"); preview.hidden = false; preview.src = item.url;
+          }, { once: true });
+        }
         const caption = el("span", { class: "cc-media-caption", text: item.title });
+        const choose = el("label", { class: "cc-checkline" });
+        const check = el("input", { type: "checkbox", checked: selected.has(item.url), "aria-label": `${item.title} medyasını seç` });
+        check.addEventListener("change", () => { check.checked ? selected.add(item.url) : selected.delete(item.url); status.textContent = `${items.length} öğe · ${favorites.size} favori · ${hidden.size} gizli · ${selected.size} seçili`; });
+        choose.append(check, document.createTextNode(` ${type.toLocaleUpperCase("tr-TR")}`));
         const actions = el("div", { class: "cc-row wrap" });
-        const favorited = favorites.includes(item.url);
-        actions.append(el("button", { class: "cc-button cc-small", text: favorited ? "★ Favori" : "☆ Favori", onclick: async () => {
-          const next = favorited ? favorites.filter((url) => url !== item.url) : [...favorites, item.url];
-          await CC.repository.saveMediaFavorites(next); await CC.ui.render("media");
+        actions.append(el("button", { class: "cc-button cc-small", text: favorites.has(item.url) ? "★ Favori" : "☆ Favori", onclick: async () => {
+          favorites.has(item.url) ? favorites.delete(item.url) : favorites.add(item.url);
+          await CC.repository.saveMediaFavorites([...favorites]); draw();
         } }));
         actions.append(el("button", { class: "cc-button cc-small cc-quiet", text: "Sohbeti aç", onclick: () => CC.adapter.openSearchResult(item.conversationId, item.messageId) }));
-        card.append(image, caption, actions); grid.append(card);
+        actions.append(el("button", { class: "cc-button cc-small cc-quiet", text: hidden.has(item.url) ? "Galeride göster" : "Galeride gizle", onclick: async () => {
+          hidden.has(item.url) ? hidden.delete(item.url) : hidden.add(item.url);
+          await CC.repository.saveHiddenMedia([...hidden]); draw();
+        } }));
+        card.append(preview, caption, choose, actions); grid.append(card);
       }
     }
-    query.addEventListener("input", draw); favoriteCheck.addEventListener("change", draw);
-    download.addEventListener("click", () => CC.media.downloadItems(unique.filter((item) => !favoriteCheck.checked || favorites.includes(item.url))));
+    query.addEventListener("input", draw); favoriteCheck.addEventListener("change", draw); hiddenCheck.addEventListener("change", draw);
+    selectVisible.addEventListener("click", () => {
+      const term = CC.normalize(query.value);
+      const visible = unique.filter((item) => (hiddenCheck.checked || !hidden.has(item.url)) && (!favoriteCheck.checked || favorites.has(item.url)) && (!term || CC.normalize(`${item.title} ${item.prompt || ""} ${item.url}`).includes(term)));
+      if (visible.length && visible.every((item) => selected.has(item.url))) visible.forEach((item) => selected.delete(item.url));
+      else visible.forEach((item) => selected.add(item.url));
+      draw();
+    });
+    download.addEventListener("click", () => {
+      const items = unique.filter((item) => selected.has(item.url) && visibleUrlForDownload(item, hidden, hiddenCheck.checked));
+      if (!items.length) return CC.ui.toast("Önce galerideki medya öğelerini seçin.", "error");
+      CC.media.downloadItems(items);
+    });
     draw();
   }});
+  function visibleUrlForDownload(item, hidden, includeHidden) { return includeHidden || !hidden.has(item.url); }
 })();

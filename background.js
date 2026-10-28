@@ -100,6 +100,41 @@ async function indexAction(action, payload = {}) {
   if (action === "indexed-chats") {
     return requestValue(db.transaction("indexedChats", "readonly").objectStore("indexedChats").getAll());
   }
+  if (action === "export-page" || action === "export-chat-page") {
+    const isChatPage = action === "export-chat-page";
+    const storeName = isChatPage ? "indexedChats" : "messages";
+    const limit = Math.max(1, Math.min(isChatPage ? 500 : 100, Number(payload.limit) || (isChatPage ? 200 : 100)));
+    const afterKey = typeof payload.afterKey === "string" && payload.afterKey ? payload.afterKey : null;
+    const tx = db.transaction(storeName, "readonly");
+    const store = tx.objectStore(storeName);
+    const range = afterKey ? IDBKeyRange.lowerBound(afterKey, true) : undefined;
+    const items = [];
+    let nextKey = null, done = false;
+    await new Promise((resolve, reject) => {
+      const request = store.openCursor(range);
+      request.onerror = () => reject(request.error || new Error("Yedek verisi okunamadı."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { done = true; resolve(); return; }
+        const { key, normalized, ...record } = cursor.value;
+        items.push(record);
+        nextKey = String(cursor.primaryKey);
+        if (items.length >= limit) { resolve(); return; }
+        cursor.continue();
+      };
+    });
+    const byteLength = new TextEncoder().encode(JSON.stringify(items)).byteLength;
+    if (byteLength > 12 * 1024 * 1024) throw new Error("Tek yedek sayfası 12 MB sınırını aşıyor; yedek işlemi güvenli biçimde durduruldu.");
+    return { items, nextKey, done };
+  }
+  if (action === "restore-chat-marks") {
+    const chats = Array.isArray(payload.chats) ? payload.chats : [];
+    const tx = db.transaction("indexedChats", "readwrite");
+    const store = tx.objectStore("indexedChats");
+    for (const chat of chats) if (chat && typeof chat.id === "string") store.put(chat);
+    await transactionDone(tx);
+    return chats.length;
+  }
   if (action === "rule-matches") {
     const terms = (payload.rule?.keywords || []).map(normalize).filter(Boolean);
     if (!terms.length) return [];
@@ -254,7 +289,10 @@ async function indexAction(action, payload = {}) {
   if (action === "media") {
     const all = await requestValue(db.transaction("messages", "readonly").objectStore("messages").getAll());
     const media = [];
-    for (const item of all) for (const url of item.images || []) media.push({ url, conversationId: item.conversationId, title: item.title, prompt: item.text || "", messageId: item.id, timestamp: item.timestamp });
+    for (const item of all) {
+      const entries = Array.isArray(item.media) && item.media.length ? item.media : (item.images || []).map((url) => ({ url, kind: "image" }));
+      for (const entry of entries) if (entry && /^https?:\/\//i.test(entry.url || "")) media.push({ url: entry.url, kind: ["image", "video", "audio", "file"].includes(entry.kind) ? entry.kind : "file", conversationId: item.conversationId, title: item.title, prompt: item.text || "", messageId: item.id, timestamp: item.timestamp });
+    }
     return media;
   }
   if (action === "remove") {

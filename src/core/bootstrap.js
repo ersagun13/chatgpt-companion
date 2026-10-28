@@ -1,7 +1,7 @@
 (function initChatCompanion() {
   if (globalThis.ChatCompanion) return;
   const CC = {
-    version: "0.6.0",
+    version: "0.7.0",
     state: { locale: "tr", root: null, shadow: null, currentView: "home", route: location.pathname },
     locales: globalThis.CC_LOCALES || {},
     features: { items: new Map(), register(item) { this.items.set(item.id, item); } },

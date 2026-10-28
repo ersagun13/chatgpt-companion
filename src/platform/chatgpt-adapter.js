@@ -216,6 +216,22 @@
     }
     return output;
   }
+  function collectMediaItems(value, output = new Map(), hint = "file", key = "") {
+    const keyType = `${key} ${value && typeof value === "object" ? `${value.mime_type || ""} ${value.content_type || ""} ${value.type || ""} ${value.file_name || ""}` : ""}`.toLowerCase();
+    const kind = /image|photo|picture/i.test(keyType) ? "image" : /video|movie/i.test(keyType) ? "video" : /audio|voice|recording/i.test(keyType) ? "audio" : hint;
+    if (typeof value === "string") {
+      if (/^(https?):\/\//i.test(value) && /url|asset|download|file|attachment/i.test(key)) output.set(value, { url: value, kind });
+      return output;
+    }
+    if (Array.isArray(value)) { for (const item of value) collectMediaItems(item, output, kind, key); return output; }
+    if (value && typeof value === "object") {
+      for (const [childKey, item] of Object.entries(value)) {
+        const childHint = /image|photo|picture/i.test(childKey) ? "image" : /video|movie/i.test(childKey) ? "video" : /audio|voice|recording/i.test(childKey) ? "audio" : /file|attachment|document/i.test(childKey) ? "file" : kind;
+        collectMediaItems(item, output, childHint, childKey);
+      }
+    }
+    return output;
+  }
   async function fetchConversationForIndex(id) {
     if (!/^[A-Za-z0-9_-]{6,}$/.test(id || "")) throw new Error("Sohbet kimliği geçersiz.");
     const url = new URL(`/backend-api/conversation/${encodeURIComponent(id)}?s=true`, location.origin);
@@ -241,16 +257,18 @@
         const messages = mapping.map((node) => node?.message).filter((message) => message && ["user", "assistant"].includes(message.author?.role))
           .map((message) => {
             const parts = message.content?.parts ?? message.content;
+            const media = [...collectMediaItems(message.content).values()];
             return {
               id: String(message.id || `${id}-${message.create_time || Math.random()}`),
               conversationId: id,
               title: clean(payload.title || "Başlıksız sohbet").slice(0, 240),
               role: message.author.role,
               text: collectText(parts).join("\n").trim(),
-              images: [...collectImageUrls(message.content)],
+              images: [...new Set([...collectImageUrls(message.content), ...media.filter((item) => item.kind === "image").map((item) => item.url)])],
+              media,
               timestamp: historyTimestamp(message.create_time)
             };
-          }).filter((message) => message.text || message.images.length)
+          }).filter((message) => message.text || message.media.length)
           .sort((left, right) => (Date.parse(left.timestamp || "") || 0) - (Date.parse(right.timestamp || "") || 0));
         return { id, title: clean(payload.title || "Başlıksız sohbet").slice(0, 240), messages };
       } catch (error) {
@@ -292,18 +310,24 @@
   async function collectHistoryFromAccount(max, onProgress, shouldStop) {
     const limit = 28;
     const maxPages = Math.ceil(max / limit) + 2;
-    const records = new Map();
+    const savedCatalog = await CC.repository.getHistoryCatalog().catch(() => []);
+    const records = new Map(savedCatalog.map((item) => [item.id, item]));
     let pages = 0;
-    let reachedEnd = true;
     let stopped = false;
+    let stalled = false;
+    let state = await CC.repository.getHistoryScanState().catch(() => null);
+    if (!state || state.version !== 1 || Date.now() - Number(state.updatedAt || 0) > 6 * 60 * 60 * 1000) {
+      state = { version: 1, offsets: { active: 0, archived: 0 }, done: { active: false, archived: false }, fingerprints: {}, updatedAt: Date.now() };
+    }
     let accessToken = await readAccountAccessToken();
     try {
-      for (const archived of [false, true]) {
-        if (shouldStop?.()) { stopped = true; reachedEnd = false; break; }
-        let offset = 0;
+      for (const [archived, key] of [[false, "active"], [true, "archived"]]) {
+        if (state.done[key]) continue;
+        if (shouldStop?.()) { stopped = true; break; }
+        let offset = Math.max(0, Number(state.offsets[key]) || 0);
         let archivePages = 0;
         while (records.size < max && archivePages < maxPages) {
-          if (shouldStop?.()) { stopped = true; reachedEnd = false; break; }
+          if (shouldStop?.()) { stopped = true; break; }
           let page;
           let lastError;
           let refreshedToken = false;
@@ -326,31 +350,50 @@
           }
           if (lastError) throw lastError;
           const items = page.items;
-          const previousCount = records.size;
+          const pageRecords = [];
           for (const item of items) {
             const record = normalizeHistoryItem(item, archived);
-            if (record) records.set(record.id, record);
+            if (record) { records.set(record.id, record); pageRecords.push(record); }
           }
+          const fingerprint = pageRecords.map((item) => item.id).join("|");
+          if (items.length && fingerprint && fingerprint === state.fingerprints[key]) {
+            stalled = true;
+            break;
+          }
+          if (pageRecords.length) await CC.repository.saveHistoryCatalog(pageRecords);
           pages++;
           archivePages++;
           onProgress?.({ count: records.size, step: pages, maxScrolls: maxPages, expanded: true, retrying: false, source: "account" });
-          if (!items.length || page.hasMore === false || (page.total !== null && offset + items.length >= page.total) || (page.total === null && items.length < limit)) break;
-          if (records.size === previousCount) { reachedEnd = false; break; }
+          state.fingerprints[key] = fingerprint;
+          if (!items.length || page.hasMore === false || (page.total !== null && offset + items.length >= page.total) || (page.total === null && items.length < limit)) {
+            state.done[key] = true;
+            state.offsets[key] = offset + items.length;
+            state.updatedAt = Date.now();
+            await CC.repository.saveHistoryScanState(state);
+            break;
+          }
           offset += items.length;
-          if (archivePages === maxPages) reachedEnd = false;
+          state.offsets[key] = offset;
+          state.updatedAt = Date.now();
+          await CC.repository.saveHistoryScanState(state);
+          if (archivePages === maxPages) break;
           await CC.sleep(120);
         }
-        if (stopped) break;
-        if (records.size >= max || archivePages >= maxPages) reachedEnd = false;
+        if (stopped || stalled || records.size >= max || archivePages >= maxPages) break;
       }
     } catch (error) {
       error.partialRecords = [...records.values()];
       error.partialPages = pages;
+      state.updatedAt = Date.now();
+      await CC.repository.saveHistoryScanState(state).catch(() => {});
       accessToken = null;
       throw error;
     }
     accessToken = null;
-    return { records: [...records.values()].slice(0, max), pages, reachedEnd, stalled: false, stopped };
+    const reachedEnd = Boolean(state.done.active && state.done.archived);
+    if (reachedEnd) await CC.repository.clearHistoryScanState().catch(() => {});
+    else { state.updatedAt = Date.now(); await CC.repository.saveHistoryScanState(state).catch(() => {}); }
+    return { records: [...records.values()].slice(0, max), pages, reachedEnd, stalled, stopped, resumeState: { ...state } };
   }
   CC.adapter = {
     isSupportedPage() { return location.hostname === "chatgpt.com"; },
@@ -510,17 +553,23 @@
           const role = ["user", "assistant", "system"].includes(roleValue) ? roleValue : "assistant";
           const messageNode = node.closest("[data-message-id]") || node;
           const text = (node.innerText || node.textContent || "").trim();
-          const images = [...node.querySelectorAll("img")].map((img) => img.currentSrc || img.src).filter((url) => /^https?:/i.test(url));
+          const mediaByUrl = new Map();
+          for (const image of node.querySelectorAll("img")) { const url = image.currentSrc || image.src; if (/^https?:/i.test(url)) mediaByUrl.set(url, { url, kind: "image" }); }
+          for (const [selector, kind] of [["video[src],video source[src]", "video"], ["audio[src],audio source[src]", "audio"], ['a[download][href],[data-testid*="file"] a[href]', "file"]]) {
+            for (const element of node.querySelectorAll(selector)) { const url = element.currentSrc || element.src || element.href; if (/^https?:/i.test(url)) mediaByUrl.set(url, { url, kind }); }
+          }
+          const media = [...mediaByUrl.values()];
+          const images = media.filter((item) => item.kind === "image").map((item) => item.url);
           const links = [...node.querySelectorAll("a[href]")].map((link) => ({ text: clean(link.innerText || link.getAttribute("aria-label")), url: link.href }))
             .filter((link) => /^https?:/i.test(link.url));
-          if (!text && !images.length && !links.length) continue;
+          if (!text && !media.length && !links.length) continue;
           const timeNode = messageNode.querySelector("time[datetime], time");
           const timestamp = clean(timeNode?.getAttribute("datetime") || timeNode?.innerText || "") || undefined;
           const sourceId = messageNode.getAttribute("data-message-id");
-          const signature = `${role}\u0000${timestamp || ""}\u0000${text}\u0000${images.join("\u0001")}\u0000${links.map((link) => link.url).join("\u0001")}`;
+          const signature = `${role}\u0000${timestamp || ""}\u0000${text}\u0000${media.map((item) => item.url).join("\u0001")}\u0000${links.map((link) => link.url).join("\u0001")}`;
           const key = sourceId || signature;
           if (messagesByKey.has(key)) continue;
-          messagesByKey.set(key, { id: sourceId || `${id}:visible:${messagesByKey.size}`, role, text, images, links, timestamp });
+          messagesByKey.set(key, { id: sourceId || `${id}:visible:${messagesByKey.size}`, role, text, images, media, links, timestamp });
           grew = true;
         }
         return grew;

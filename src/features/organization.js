@@ -36,7 +36,7 @@
       const opened = await CC.adapter.openArchiveManager();
       if (!opened.ok) throw new Error(opened.reason || "Arşiv listesi açılamadı.");
     } else await CC.adapter.closeArchiveManager();
-    const collected = await CC.adapter.collectVisibleChats({ max: 50000, maxScrolls: 500, onProgress });
+    const collected = await CC.adapter.collectVisibleChats({ max: 250000, maxScrolls: 800, onProgress });
     await CC.repository.saveHistoryCatalog(collected);
     return visibleChats(mode, collected);
   }
@@ -54,12 +54,13 @@
   }
 
   async function manageSelectedChats(ids, action, archiveStates = {}) {
-    if (!ids.length) { CC.ui.toast("Önce en az bir sohbet seçin.", "error"); return; }
+    const selectedIds = [...new Set(ids)].filter(Boolean);
+    if (!selectedIds.length) { CC.ui.toast("Önce en az bir sohbet seçin.", "error"); return; }
     if (action === "delete") {
-      const accepted = await CC.ui.confirm("Sohbetler kalıcı olarak silinecek", `${ids.length} sohbet ChatGPT hesabınızdan kalıcı olarak silinecek ve geri getirilemeyecek. Devam edilsin mi?`, { confirmText: `Kalıcı sil (${ids.length})`, danger: true });
+      const accepted = await CC.ui.confirm("Sohbetler kalıcı olarak silinecek", `${selectedIds.length} sohbet ChatGPT hesabınızdan kalıcı olarak silinecek ve geri getirilemeyecek. Devam edilsin mi?`, { confirmText: `Kalıcı sil (${selectedIds.length})`, danger: true });
       if (!accepted) return;
     }
-    await CC.repository.saveJob({ id: CC.id(), type: "action", action, archiveStates, ids: [...new Set(ids)], cursor: 0, completed: 0, startedAt: Date.now() });
+    await CC.repository.saveJob({ id: CC.id(), type: "action", action, archiveStates, ids: selectedIds, cursor: 0, completed: 0, failures: [], startedAt: Date.now() });
     await continueJob();
   }
 
@@ -71,18 +72,25 @@
       if (!job || job.type !== "action") return;
       if (job.cursor >= job.ids.length) {
         await CC.repository.clearJob();
-        CC.ui.toast(`${job.completed} sohbet için işlem tamamlandı.`);
+        const failures = job.failures || [];
+        CC.state.lastActionSummary = { action: job.action, completed: job.completed || 0, total: job.ids.length, failures, finishedAt: Date.now() };
+        CC.ui.toast(`${job.completed || 0}/${job.ids.length} işlem ChatGPT tarafından kabul edildi · ${failures.length} başarısız`, failures.length ? "error" : "info");
         if (CC.state.panel && !CC.state.panel.hidden) await CC.ui.render("manage");
         return;
       }
       const id = job.ids[job.cursor];
-      CC.ui.open("manage");
       const result = await CC.adapter.performChatAction(id, job.action, { archived: job.archiveStates?.[id] ?? null });
-      if (!result.ok) return stopJob(result.reason || "ChatGPT işlemi doğrulanamadı.");
-      if (job.action === "archive") await CC.repository.saveChatMeta(id, { archived: true });
-      if (job.action === "unarchive") await CC.repository.saveChatMeta(id, { archived: false });
-      if (job.action === "delete") await CC.repository.removeChats([id]);
-      await CC.repository.saveJob({ ...job, cursor: job.cursor + 1, completed: job.completed + 1 });
+      const failures = [...(job.failures || [])];
+      let completed = job.completed || 0;
+      if (!result.ok) failures.push({ id, reason: result.reason || "ChatGPT işlemi kabul etmedi.", at: Date.now() });
+      else {
+        completed++;
+        if (job.action === "archive") await CC.repository.saveChatMeta(id, { archived: true });
+        if (job.action === "unarchive") await CC.repository.saveChatMeta(id, { archived: false });
+        if (job.action === "delete") await CC.repository.removeChats([id]);
+        if (["archive", "unarchive", "delete"].includes(job.action)) await CC.repository.clearHistoryScanState();
+      }
+      await CC.repository.saveJob({ ...job, cursor: job.cursor + 1, completed, failures, currentId: null, updatedAt: Date.now() });
       setTimeout(() => continueJob(), 250);
     } catch (error) {
       await stopJob(error?.message || "Toplu işlem durduruldu.");
@@ -94,6 +102,7 @@
     if (!job) return;
     await CC.repository.clearJob();
     if (job.id) await CC.tempStore.clear(job.id).catch(() => {});
+    if (job.type === "action") CC.state.lastActionSummary = { action: job.action, completed: job.completed || 0, total: job.ids?.length || 0, failures: [...(job.failures || []), { id: job.ids?.[job.cursor] || "", reason, at: Date.now() }], finishedAt: Date.now() };
     CC.ui.toast(`${reason} ${job.completed || 0}/${job.ids?.length || 0} tamamlandı.`, "error");
     if (CC.state.panel && !CC.state.panel.hidden) await CC.ui.render("manage");
   }
@@ -134,6 +143,8 @@
     const query = el("input", { class: "cc-input", type: "search", placeholder: "Başlığa göre filtrele…", "aria-label": "Sohbetleri ada göre filtrele" });
     const folderFilter = el("select", { class: "cc-select", "aria-label": "Klasöre göre filtrele" });
     folderFilter.append(el("option", { value: "", text: "Tüm klasörler" }), el("option", { value: "__folderless__", text: "Klasörsüz" }));
+    const tagFilter = el("select", { class: "cc-select", "aria-label": "Etikete göre filtrele" });
+    tagFilter.append(el("option", { value: "", text: "Tüm etiketler" }));
     const sortOrder = el("select", { class: "cc-select", "aria-label": "Sohbetleri tarihe göre sırala" });
     sortOrder.append(el("option", { value: "newest", text: "Yeniler önce" }), el("option", { value: "oldest", text: "Eskiler önce" }), el("option", { value: "title", text: "Başlığa göre" }));
     const count = el("p", { class: "cc-muted", text: "ChatGPT listesini yükleyin." });
@@ -163,7 +174,18 @@
     const pageLabel = el("span", { class: "cc-muted", text: "" });
     const nextPage = el("button", { class: "cc-button cc-small", text: "Sonraki" });
     pageControls.append(previousPage, pageLabel, nextPage);
-    container.append(tabs, query, folderFilter, sortOrder, count, historyStatus, progress, jobProgress, actions, list, pageControls);
+    container.append(tabs, query, folderFilter, tagFilter, sortOrder, count, historyStatus, progress, jobProgress, actions, list, pageControls);
+    if (CC.state.lastActionSummary) {
+      const summary = CC.state.lastActionSummary;
+      const summaryNote = el("aside", { class: "cc-note", text: `Son toplu işlem: ${summary.completed}/${summary.total} istek ChatGPT tarafından kabul edildi · ${summary.failures.length} başarısız.` });
+      container.insertBefore(summaryNote, tabs);
+      if (summary.failures.length) {
+        const details = el("details", { class: "cc-note" });
+        details.append(el("summary", { text: "Başarısız sohbetlerin ayrıntıları" }));
+        for (const failure of summary.failures.slice(0, 20)) details.append(el("p", { class: "cc-item-meta", text: `${failure.id}: ${failure.reason}` }));
+        container.insertBefore(details, tabs);
+      }
+    }
 
     const historyCatalog = await CC.repository.getHistoryCatalog();
     let historyCatalogCount = historyCatalog.length;
@@ -179,7 +201,7 @@
     unarchive.disabled = mode === "active";
     let chats = await visibleChats(mode);
     historyStatus.textContent = historyCatalog.length
-      ? `Eklentinin önceki taramalarından ${historyCatalog.length} sohbet kayıtlı.`
+        ? `Eklentinin önceki taramalarından ${historyCatalog.length} sohbet kayıtlı.`
       : "İlk günden itibaren erişilebilir sohbetleri yüklemek için “Tüm geçmişi yükle” düğmesine basın.";
     const selected = new Set();
     const job = await CC.repository.getJob();
@@ -189,7 +211,7 @@
       const total = job.ids?.length || 0;
       const completed = job.completed || 0;
       jobProgress.firstChild.style.width = `${total ? Math.min(100, Math.round(completed / total * 100)) : 0}%`;
-      progress.textContent = `${job.type === "export" ? "Dışa aktarma" : "Toplu işlem"} sürüyor: ${completed}/${total}.`;
+      progress.textContent = `${job.type === "export" ? "Dışa aktarma" : "Toplu işlem"} sürüyor: ${completed}/${total}${job.failures?.length ? ` · ${job.failures.length} başarısız` : ""}.`;
       const stop = el("button", { class: "cc-button cc-danger cc-small", text: "Durdur", onclick: () => CC.organization.stopJob("Kullanıcı işlemi durdurdu.") });
       progress.append(" ", stop);
     }
@@ -215,7 +237,7 @@
           const scan = CC.adapter.lastHistoryLoad;
           historyCatalogCount = (await CC.repository.getHistoryCatalog()).length;
           const result = scan?.source === "account"
-            ? scan.stopped ? "Yükleme durduruldu. Bulunan sohbetler saklandı; yeniden yükleyebilirsiniz." : scan.reachedEnd ? "ChatGPT hesabınızdaki erişilebilir geçmiş yüklendi." : scan.apiError ? "ChatGPT bazı sayfaları yüklemedi. Bulunan sohbetler saklandı; yeniden deneyebilirsiniz." : "Geçmiş uzun olduğu için tarama sınırına ulaştı. Yeniden deneyebilirsiniz."
+            ? scan.stopped ? "Yükleme durduruldu. Bulunan sohbetler saklandı; yeniden başlatınca kaldığı sayfadan devam edecek." : scan.reachedEnd ? "ChatGPT hesabınızın erişebildiği etkin ve arşivlenmiş geçmiş yüklendi." : scan.apiError ? "Bazı sayfalar yüklenemedi. Bulunan sohbetler saklandı; yeniden başlatınca kaldığı sayfadan sürdürülecek." : scan.stalled ? "ChatGPT aynı geçmiş sayfasını tekrar verdi. Kayıtlar saklandı; daha sonra yeniden deneyin." : "Tarama sınırına ulaşıldı. Bulunan kayıtlar saklandı; yeniden başlatınca tarama devam edecek."
             : scan?.stopped ? "Yükleme durduruldu. Bulunan sohbetler saklandı; yeniden yükleyebilirsiniz." : scan?.stalled ? "ChatGPT daha eski sohbetleri yüklemedi. Yeniden deneyebilirsiniz." : "ChatGPT arayüzünde görünen sohbetler alındı. Daha eski kayıtlar için yeniden deneyebilirsiniz.";
           historyStatus.textContent = `${scan?.count ?? chats.length} sohbet bulundu. ${result}`;
           loadButton.textContent = scan?.source === "account" && scan.reachedEnd ? "Geçmişi güncelle" : "Yeniden dene";
@@ -243,6 +265,8 @@
       const previousFolder = folderFilter.value;
       folderFilter.replaceChildren(el("option", { value: "", text: "Tüm klasörler" }), el("option", { value: "__folderless__", text: "Klasörsüz" }));
       for (const folder of CC.organization.folderCache || []) folderFilter.append(el("option", { value: folder.id, text: `${folder.pinned ? "★ " : ""}${folder.name}` }));
+      tagFilter.replaceChildren(el("option", { value: "", text: "Tüm etiketler" }));
+      for (const tag of CC.organization.tagCache || []) tagFilter.append(el("option", { value: tag.id, text: `#${tag.name}` }));
       const desiredFolder = previousFolder || CC.state.folderFilterId || "";
       if ([...folderFilter.options].some((option) => option.value === desiredFolder)) folderFilter.value = desiredFolder;
       CC.state.folderFilterId = folderFilter.value;
@@ -251,7 +275,8 @@
       const folderId = folderFilter.value;
       const matches = CC.search.filterTitles(chats, query.value).filter((chat) => {
         const ids = chat.folderIds || (chat.folderId ? [chat.folderId] : []);
-        return !folderId || (folderId === "__folderless__" ? ids.length === 0 : ids.includes(folderId));
+        const folderOk = !folderId || (folderId === "__folderless__" ? ids.length === 0 : ids.includes(folderId));
+        return folderOk && (!tagFilter.value || (chat.tagIds || []).includes(tagFilter.value));
       }).sort((left, right) => {
         if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
         if (sortOrder.value === "title") return CC.normalize(left.title).localeCompare(CC.normalize(right.title), "tr");
@@ -320,6 +345,7 @@
     });
     query.addEventListener("input", () => { page = 0; draw(); });
     folderFilter.addEventListener("change", () => { CC.state.folderFilterId = folderFilter.value; page = 0; draw(); CC.ui.refreshFolderShortcuts(); });
+    tagFilter.addEventListener("change", () => { page = 0; draw(); });
     sortOrder.addEventListener("change", () => { page = 0; draw(); });
     previousPage.addEventListener("click", () => { page = Math.max(0, page - 1); draw(); });
     nextPage.addEventListener("click", () => { page++; draw(); });
@@ -384,7 +410,7 @@
       CC.ui.toast(`${selected.size} sohbet için sabitleme durumu değiştirildi.`);
       await refresh();
     });
-    CC.organization.folderCache = (await CC.repository.getFolders()).sort((left, right) => Number(right.pinned) - Number(left.pinned) || CC.normalize(left.name).localeCompare(CC.normalize(right.name), "tr"));
+    CC.organization.folderCache = (await CC.repository.getFolders()).sort((left, right) => Number(right.pinned) - Number(left.pinned) || String(left.parentId || "").localeCompare(String(right.parentId || "")) || (Number(left.position) || 0) - (Number(right.position) || 0) || CC.normalize(left.name).localeCompare(CC.normalize(right.name), "tr"));
     CC.organization.tagCache = await CC.repository.getTags();
     draw();
   }});
@@ -392,7 +418,8 @@
   CC.features.register({ id: "organize", titleKey: "organize", async render(container) {
     container.append(el("h2", { text: "Klasörler ve etiketler" }));
     container.append(el("p", { class: "cc-note", text: "Klasörleme bu eklenti içinde yereldir; ChatGPT’deki sohbetlerin kendisi taşınmaz." }));
-    const [folders, allMeta] = await Promise.all([CC.repository.getFolders(), CC.repository.getChatMeta()]);
+    const [storedFolders, allMeta] = await Promise.all([CC.repository.getFolders(), CC.repository.getChatMeta()]);
+    const folders = [...storedFolders].sort((left, right) => String(left.parentId || "").localeCompare(String(right.parentId || "")) || (Number(left.position) || 0) - (Number(right.position) || 0) || CC.normalize(left.name).localeCompare(CC.normalize(right.name), "tr"));
     const parent = el("select", { class: "cc-select", "aria-label": "Üst klasör" });
     parent.append(el("option", { value: "", text: "Üst klasör yok" }));
     for (const folder of folders) parent.append(el("option", { value: folder.id, text: folder.name }));
@@ -409,10 +436,36 @@
     container.append(el("div", { class: "cc-inline-form" }, [folderName, folderColor, create]), parent);
     const list = el("div", { class: "cc-list" });
     const byId = new Map(folders.map((item) => [item.id, item]));
+    const isInside = (candidateId, ancestorId) => {
+      let current = byId.get(candidateId);
+      while (current?.parentId) { if (current.parentId === ancestorId) return true; current = byId.get(current.parentId); }
+      return false;
+    };
     const folderCounts = new Map();
     for (const item of Object.values(allMeta)) for (const id of (item.folderIds || (item.folderId ? [item.folderId] : []))) folderCounts.set(id, (folderCounts.get(id) || 0) + 1);
     for (const folder of folders) {
       const row = el("div", { class: "cc-item cc-folder-row" });
+      row.draggable = true; row.dataset.folderId = folder.id; row.title = "Sıralamak veya alt klasöre taşımak için sürükleyin";
+      row.addEventListener("dragstart", (event) => { event.dataTransfer?.setData("text/plain", folder.id); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; row.classList.add("cc-folder-dragging"); });
+      row.addEventListener("dragend", () => row.classList.remove("cc-folder-dragging"));
+      row.addEventListener("dragover", (event) => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "move"; row.classList.add("cc-folder-drop-target"); });
+      row.addEventListener("dragleave", () => row.classList.remove("cc-folder-drop-target"));
+      row.addEventListener("drop", async (event) => {
+        event.preventDefault(); row.classList.remove("cc-folder-drop-target");
+        const sourceId = event.dataTransfer?.getData("text/plain");
+        const source = byId.get(sourceId), target = byId.get(folder.id);
+        if (!source || !target || source.id === target.id) return;
+        const nest = event.offsetY > row.clientHeight * 0.25 && event.offsetY < row.clientHeight * 0.75;
+        if (isInside(target.id, source.id)) return CC.ui.toast("Klasör kendi alt klasörüne taşınamaz.", "error");
+        const parentId = nest ? target.id : (target.parentId || null);
+        const siblings = folders.filter((item) => item.id !== source.id && (item.parentId || null) === parentId);
+        let targetIndex = siblings.findIndex((item) => item.id === target.id);
+        if (targetIndex < 0) targetIndex = siblings.length;
+        else if (!nest && event.offsetY >= row.clientHeight / 2) targetIndex++;
+        siblings.splice(targetIndex, 0, { ...source, parentId });
+        for (const [position, item] of siblings.entries()) await CC.repository.saveFolder({ ...item, position });
+        await CC.ui.render("organize"); CC.ui.refreshFolderShortcuts();
+      });
       const main = el("span", { class: "cc-item-main" });
       const parentName = byId.get(folder.parentId)?.name;
       const title = el("span", { class: "cc-item-title", text: `${folder.pinned ? "★ " : ""}${folder.name}` });
@@ -428,6 +481,8 @@
       color.addEventListener("change", async () => { await CC.repository.saveFolder({ ...folder, color: color.value }); await CC.ui.render("organize"); });
       const pin = el("button", { class: "cc-button cc-small", text: folder.pinned ? "Sabitlemeyi kaldır" : "Sabitle" });
       pin.addEventListener("click", async () => { await CC.repository.saveFolder({ ...folder, pinned: !folder.pinned }); await CC.ui.render("organize"); });
+      const exportFolder = el("button", { class: "cc-button cc-small", text: "ZIP dışa aktar", title: "Bu klasörü ve alt klasörlerini yapılandırılmış ZIP olarak indir" });
+      exportFolder.addEventListener("click", () => CC.exporter.exportFolder(folder.id));
       const remove = el("button", { class: "cc-button cc-small", text: "Sil" });
       remove.addEventListener("click", async () => {
         if (!(await CC.ui.confirm("Klasörü sil", `“${folder.name}” klasörü silinir. ChatGPT sohbetleri etkilenmez.`))) return;
@@ -439,7 +494,7 @@
         for (const child of folders.filter((item) => item.parentId === folder.id)) await CC.repository.saveFolder({ ...child, parentId: folder.parentId || null });
         await CC.ui.render("organize");
       });
-      row.append(main, rename, color, pin, remove); list.append(row);
+      row.append(main, exportFolder, rename, color, pin, remove); list.append(row);
     }
     if (!folders.length) list.append(el("p", { class: "cc-muted", text: "Henüz klasör yok." }));
     container.append(list, el("h3", { text: "Etiketler" }));

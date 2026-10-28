@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Companion",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "homepage_url": "https://ersagun.com.tr/en/lab/chatgpt-companion/",
   "description": "Free Chrome extension for local ChatGPT chat folders, search, archive, delete, and export.",
   "permissions": ["storage"],

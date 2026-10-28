@@ -126,6 +126,13 @@
       await chrome.storage.local.remove(KEY.historyCatalog).catch(() => {});
       return { imported: normalized.length, total: await CC.messageIndex.catalogCount() };
     },
+    getHistoryScanState() { return read(KEY.historyScan, null); },
+    saveHistoryScanState(state) { return set(KEY.historyScan, state); },
+    clearHistoryScanState() { return enqueue(() => chrome.storage.local.remove(KEY.historyScan)); },
+    getPromptFavorites() { return read(KEY.promptFavorites, []); },
+    savePromptFavorites(items) { return set(KEY.promptFavorites, [...new Set((items || []).filter((item) => typeof item === "string"))]); },
+    getHiddenMedia() { return read(KEY.hiddenMedia, []); },
+    saveHiddenMedia(items) { return set(KEY.hiddenMedia, [...new Set((items || []).filter((item) => typeof item === "string"))]); },
     async removeChats(ids) {
       const removedIds = new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === "string"));
       if (!removedIds.size) return { history: 0, metadata: 0 };
@@ -142,7 +149,7 @@
     clearJob() { return enqueue(() => chrome.storage.local.remove(KEY.job)); },
     async exportMetadata() {
       const [data, [historyCatalog, chatMeta]] = await Promise.all([
-        chrome.storage.local.get([KEY.settings, KEY.folders, KEY.tags, KEY.prompts, KEY.chains, KEY.bookmarks, KEY.labels, KEY.tagRules, KEY.mediaFavorites, KEY.searchHistory, KEY.usage]),
+        chrome.storage.local.get([KEY.settings, KEY.folders, KEY.tags, KEY.prompts, KEY.promptFavorites, KEY.chains, KEY.bookmarks, KEY.labels, KEY.tagRules, KEY.mediaFavorites, KEY.hiddenMedia, KEY.searchHistory, KEY.usage]),
         Promise.all([this.getHistoryCatalog(), this.getChatMeta()])
       ]);
       return {
@@ -151,15 +158,15 @@
         folders: data[KEY.folders] || [], tags: data[KEY.tags] || [], chatMeta,
         historyCatalog, prompts: data[KEY.prompts] || [], chains: data[KEY.chains] || [],
         bookmarks: data[KEY.bookmarks] || [], labels: data[KEY.labels] || [], tagRules: data[KEY.tagRules] || [],
-        mediaFavorites: data[KEY.mediaFavorites] || [], searchHistory: data[KEY.searchHistory] || [], usage: data[KEY.usage] || { days: {}, seenIds: [] }
+        promptFavorites: data[KEY.promptFavorites] || [], mediaFavorites: data[KEY.mediaFavorites] || [], hiddenMedia: data[KEY.hiddenMedia] || [], searchHistory: data[KEY.searchHistory] || [], usage: data[KEY.usage] || { days: {}, seenIds: [] }
       };
     },
     async restoreMetadata(record, merge = false) {
-      if (!record || record.schemaVersion !== 1 || !Array.isArray(record.folders) || !Array.isArray(record.tags) || !record.chatMeta || typeof record.chatMeta !== "object" || Array.isArray(record.chatMeta) || (record.historyCatalog !== undefined && !Array.isArray(record.historyCatalog)) || ["prompts", "chains", "bookmarks", "labels", "tagRules", "mediaFavorites", "searchHistory"].some((key) => record[key] !== undefined && !Array.isArray(record[key])) || (record.usage !== undefined && (!record.usage || typeof record.usage !== "object" || Array.isArray(record.usage)))) {
+      if (!record || record.schemaVersion !== 1 || !Array.isArray(record.folders) || !Array.isArray(record.tags) || !record.chatMeta || typeof record.chatMeta !== "object" || Array.isArray(record.chatMeta) || (record.historyCatalog !== undefined && !Array.isArray(record.historyCatalog)) || ["prompts", "promptFavorites", "chains", "bookmarks", "labels", "tagRules", "mediaFavorites", "hiddenMedia", "searchHistory"].some((key) => record[key] !== undefined && !Array.isArray(record[key])) || (record.usage !== undefined && (!record.usage || typeof record.usage !== "object" || Array.isArray(record.usage)))) {
         throw new Error("Bu yedek dosyası desteklenmiyor veya bozuk.");
       }
       const [data, currentCatalog, currentMeta] = await Promise.all([
-        chrome.storage.local.get([KEY.settings, KEY.folders, KEY.tags, KEY.prompts, KEY.chains, KEY.bookmarks, KEY.labels, KEY.tagRules, KEY.mediaFavorites, KEY.searchHistory, KEY.usage]),
+        chrome.storage.local.get([KEY.settings, KEY.folders, KEY.tags, KEY.prompts, KEY.promptFavorites, KEY.chains, KEY.bookmarks, KEY.labels, KEY.tagRules, KEY.mediaFavorites, KEY.hiddenMedia, KEY.searchHistory, KEY.usage]),
         merge ? this.getHistoryCatalog() : Promise.resolve([]),
         merge ? this.getChatMeta() : Promise.resolve({})
       ]);
@@ -169,7 +176,7 @@
           folders: data[KEY.folders] || [], tags: data[KEY.tags] || [], chatMeta: currentMeta,
           historyCatalog: currentCatalog, prompts: data[KEY.prompts] || [], chains: data[KEY.chains] || [],
           bookmarks: data[KEY.bookmarks] || [], labels: data[KEY.labels] || [], tagRules: data[KEY.tagRules] || [],
-          mediaFavorites: data[KEY.mediaFavorites] || [], searchHistory: data[KEY.searchHistory] || [], usage: data[KEY.usage] || { days: {}, seenIds: [] }
+          promptFavorites: data[KEY.promptFavorites] || [], mediaFavorites: data[KEY.mediaFavorites] || [], hiddenMedia: data[KEY.hiddenMedia] || [], searchHistory: data[KEY.searchHistory] || [], usage: data[KEY.usage] || { days: {}, seenIds: [] }
         };
         const chatMeta = merge ? { ...current.chatMeta, ...record.chatMeta } : record.chatMeta;
         const savedHistory = normalizeHistoryCatalog(record.historyCatalog || []);
@@ -180,7 +187,8 @@
         const usage = merge ? {
           days: Object.fromEntries([...new Set([...Object.keys(current.usage.days || {}), ...Object.keys(record.usage?.days || {})])].map((day) => [day, {
             messages: Math.max(current.usage.days?.[day]?.messages || 0, record.usage?.days?.[day]?.messages || 0),
-            activeMinutes: Math.max(current.usage.days?.[day]?.activeMinutes || 0, record.usage?.days?.[day]?.activeMinutes || 0)
+            activeMinutes: Math.max(current.usage.days?.[day]?.activeMinutes || 0, record.usage?.days?.[day]?.activeMinutes || 0),
+            activeHours: Object.fromEntries([...new Set([...Object.keys(current.usage.days?.[day]?.activeHours || {}), ...Object.keys(record.usage?.days?.[day]?.activeHours || {})])].map((hour) => [hour, Math.max(current.usage.days?.[day]?.activeHours?.[hour] || 0, record.usage?.days?.[day]?.activeHours?.[hour] || 0)]))
           }])),
           seenIds: [...new Set([...(current.usage.seenIds || []), ...(record.usage?.seenIds || [])])].slice(-10000)
         } : (record.usage || { days: {}, seenIds: [] });
@@ -188,9 +196,10 @@
           [KEY.settings]: { ...(merge ? current.settings : {}), ...(record.settings || {}) },
           [KEY.folders]: merge ? mergeById(current.folders, record.folders) : record.folders,
           [KEY.tags]: merge ? mergeById(current.tags, record.tags) : record.tags,
-          [KEY.prompts]: mergeRecords("prompts"), [KEY.chains]: mergeRecords("chains"),
+          [KEY.prompts]: mergeRecords("prompts"), [KEY.promptFavorites]: merge ? [...new Set([...current.promptFavorites, ...(record.promptFavorites || [])])] : (record.promptFavorites || []), [KEY.chains]: mergeRecords("chains"),
           [KEY.bookmarks]: mergeRecords("bookmarks"), [KEY.labels]: mergeRecords("labels"), [KEY.tagRules]: mergeRecords("tagRules"),
           [KEY.mediaFavorites]: merge ? [...new Set([...current.mediaFavorites, ...(record.mediaFavorites || [])])] : (record.mediaFavorites || []),
+          [KEY.hiddenMedia]: merge ? [...new Set([...current.hiddenMedia, ...(record.hiddenMedia || [])])] : (record.hiddenMedia || []),
           [KEY.searchHistory]: merge ? [...new Set([...(record.searchHistory || []), ...current.searchHistory])].slice(0, 8) : (record.searchHistory || []),
           [KEY.usage]: usage
         };

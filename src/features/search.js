@@ -3,11 +3,11 @@
   if (!CC) return;
   const el = (...args) => CC.make(...args);
   const categories = [
-    { name: "Kodlama", color: "#8bd5ca", pattern: /\b(code|coding|javascript|typescript|python|sql|api|bug|regex|kod|program|script|hata)\b/i },
-    { name: "Yazı", color: "#f5a97f", pattern: /\b(write|writing|draft|email|story|rewrite|essay|metin|yazı|yazi|mail|hikaye|özet|ozet)\b/i },
-    { name: "Araştırma", color: "#8aadf4", pattern: /\b(research|source|citation|study|paper|analyze|araştır|arastir|kaynak|makale|incele)\b/i },
-    { name: "Matematik ve bilim", color: "#c6a0f6", pattern: /\b(math|equation|physics|science|calculate|statistics|matematik|denklem|fizik|hesapla|istatistik)\b/i },
-    { name: "İş", color: "#eed49f", pattern: /\b(business|marketing|sales|customer|proposal|strategy|iş planı|is plani|satış|satis|müşteri|musteri|teklif)\b/i }
+    { key: "coding", name: "Kodlama", color: "#8bd5ca", keywords: ["code", "coding", "javascript", "typescript", "python", "sql", "api", "bug", "regex", "kod", "program", "script", "hata"] },
+    { key: "writing", name: "Yazı", color: "#f5a97f", keywords: ["write", "writing", "draft", "email", "story", "rewrite", "essay", "metin", "yazı", "yazi", "mail", "hikaye", "özet", "ozet"] },
+    { key: "research", name: "Araştırma", color: "#8aadf4", keywords: ["research", "source", "citation", "study", "paper", "analyze", "araştır", "arastir", "kaynak", "makale", "incele"] },
+    { key: "science", name: "Matematik ve bilim", color: "#c6a0f6", keywords: ["math", "equation", "physics", "science", "calculate", "statistics", "matematik", "denklem", "fizik", "hesapla", "istatistik"] },
+    { key: "business", name: "İş", color: "#eed49f", keywords: ["business", "marketing", "sales", "customer", "proposal", "strategy", "iş planı", "is plani", "satış", "satis", "müşteri", "musteri", "teklif"] }
   ];
   const words = (value) => String(value || "").split(/[,;\n]/).map((item) => item.trim()).filter(Boolean).slice(0, 12);
   const formatDate = (value) => value ? new Date(value).toLocaleDateString("tr-TR", { year: "numeric", month: "short", day: "numeric" }) : "Tarih bilinmiyor";
@@ -39,7 +39,10 @@
     for (let offset = 0; offset < messages.length; offset += 400) await CC.messageIndex.save(messages.slice(offset, offset + 400));
     const searchable = `${record.title || chat.title} ${messages.map((message) => message.text).join(" ")}`;
     const normalizedSearchable = CC.normalize(searchable);
-    const matched = categories.filter((category) => category.pattern.test(searchable));
+    const settings = await CC.repository.getSettings();
+    const threshold = Math.max(1, Math.min(4, Number(settings.smartTagThreshold) || 2));
+    const activeCategories = categories.filter((category) => settings.smartCategories?.[category.key] !== false);
+    const matched = activeCategories.filter((category) => category.keywords.filter((keyword) => normalizedSearchable.includes(CC.normalize(keyword))).length >= threshold);
     const ids = matched.map((category) => tags.find((tag) => CC.normalize(tag.name) === CC.normalize(category.name))?.id).filter(Boolean);
     for (const rule of rules) {
       const terms = (rule.keywords || []).map(CC.normalize).filter(Boolean);
@@ -50,8 +53,10 @@
       }
     }
     const meta = await CC.repository.getChatMetaEntry(chat.id) || {};
-    await CC.repository.saveChatMeta(chat.id, { tagIds: [...new Set([...(meta.tagIds || []), ...ids])] });
-    await CC.messageIndex.mark({ id: chat.id, title: record.title || chat.title, indexedAt: Date.now(), rulesAppliedAt: Date.now(), messageCount: messages.length });
+    const builtInIds = new Set(tags.filter((tag) => tag.builtIn).map((tag) => tag.id));
+    const manualIds = (meta.tagIds || []).filter((id) => !builtInIds.has(id));
+    await CC.repository.saveChatMeta(chat.id, { tagIds: [...new Set([...manualIds, ...ids])] });
+    await CC.messageIndex.mark({ id: chat.id, title: record.title || chat.title, indexedAt: Date.now(), rulesAppliedAt: Date.now(), smartTagConfig: JSON.stringify({ categories: settings.smartCategories || {}, threshold }), messageSchemaVersion: 2, messageCount: messages.length });
     return messages.length;
   }
 
@@ -69,7 +74,7 @@
       try {
         onProgress?.({ phase: "history", done: 0, total: 0, failures: 0, messageCount: 0 });
         const loaded = await CC.adapter.collectVisibleChats({
-          max: 50000, maxScrolls: 500, shouldStop: () => stopIndexing,
+          max: 250000, maxScrolls: 800, shouldStop: () => stopIndexing,
           onProgress: (state) => onProgress?.({ phase: "history", ...state, done: 0, total: 0, failures: 0, messageCount: 0 })
         });
         if (loaded.length) await CC.repository.saveHistoryCatalog(loaded);
@@ -79,10 +84,12 @@
         const indexedById = new Map(indexed.map((chat) => [chat.id, chat]));
         const tags = await ensureBuiltInTags();
         const rules = await CC.repository.getTagRules();
+        const settings = await CC.repository.getSettings();
+        const smartTagConfig = JSON.stringify({ categories: settings.smartCategories || {}, threshold: Math.max(1, Math.min(4, Number(settings.smartTagThreshold) || 2)) });
         const latestRuleUpdate = rules.reduce((latest, rule) => Math.max(latest, Number(rule.updatedAt || rule.createdAt) || 0), 0);
         const pending = chats.filter((chat) => {
           const state = indexedById.get(chat.id);
-          return !state || (latestRuleUpdate && latestRuleUpdate > (Number(state.rulesAppliedAt) || 0));
+          return !state || (latestRuleUpdate && latestRuleUpdate > (Number(state.rulesAppliedAt) || 0)) || state.smartTagConfig !== smartTagConfig || state.messageSchemaVersion !== 2;
         });
         let done = 0, failures = 0, messageCount = 0;
         onProgress?.({ phase: "index", done, total: pending.length, failures, messageCount });
@@ -163,19 +170,27 @@
     const resultList = el("div", { class: "cc-list cc-results" });
     resultHeader.append(resultCount); container.append(resultHeader, resultList);
     const selection = new Set();
+    const selectedPassages = new Map();
     const selectedActions = el("div", { class: "cc-row wrap cc-selection-bar", hidden: true });
     const archiveSelected = el("button", { class: "cc-button cc-small", text: "Seçilenleri arşivle" });
     const deleteSelected = el("button", { class: "cc-button cc-danger cc-small", text: "Seçilenleri sil" });
-    selectedActions.append(archiveSelected, deleteSelected); container.insertBefore(selectedActions, resultList);
+    const exportSelectedPassages = el("button", { class: "cc-button cc-small", text: "Eşleşen iletileri Markdown indir" });
+    selectedActions.append(archiveSelected, deleteSelected, exportSelectedPassages); container.insertBefore(selectedActions, resultList);
     const getOptions = () => ({ query: query.value.trim(), role: role.value, from: from.value, to: to.value, exact: exact.checked, titleOnly: titleOnly.checked, conversationId: currentOnly.checked ? CC.adapter.getCurrentConversationId() : null, include: words(include.value), includeMode: includeMode.value, exclude: words(exclude.value), excludeMode: excludeMode.value, limit: 300 });
 
     function addHighlightedText(parent, text, term) {
-      const normalized = CC.normalize(text), needle = CC.normalize(term);
-      const at = needle ? normalized.indexOf(needle) : -1;
-      if (at < 0) { parent.textContent = text; return; }
-      parent.append(document.createTextNode(text.slice(0, at)));
-      parent.append(el("mark", { class: "cc-highlight", text: text.slice(at, at + needle.length) }));
-      parent.append(document.createTextNode(text.slice(at + needle.length)));
+      const terms = [...new Set(String(term || "").trim().split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length);
+      if (!terms.length) { parent.textContent = text; return; }
+      const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const expression = new RegExp(terms.map(escape).join("|"), "gi");
+      let cursor = 0, match;
+      while ((match = expression.exec(text))) {
+        if (match.index > cursor) parent.append(document.createTextNode(text.slice(cursor, match.index)));
+        parent.append(el("mark", { class: "cc-highlight", text: match[0] }));
+        cursor = expression.lastIndex;
+      }
+      if (!cursor) { parent.textContent = text; return; }
+      if (cursor < text.length) parent.append(document.createTextNode(text.slice(cursor)));
     }
     function snippet(text, term) {
       const at = CC.normalize(text).indexOf(CC.normalize(term));
@@ -185,7 +200,7 @@
     async function search() {
       if (!query.value.trim()) { resultList.replaceChildren(el("p", { class: "cc-empty", text: "Aramak için bir sözcük veya cümle yaz." })); return; }
       runButton.disabled = true; runButton.textContent = "Aranıyor…"; resultCount.textContent = "Sonuçlar aranıyor…";
-      selection.clear(); selectedActions.hidden = true;
+      selection.clear(); selectedPassages.clear(); selectedActions.hidden = true;
       try {
         const options = getOptions();
         if (currentOnly.checked && !options.conversationId) throw new Error("Açık sohbette aramak için önce bir ChatGPT sohbeti açın.");
@@ -209,9 +224,12 @@
           const row = el("article", { class: "cc-result" });
           const check = el("input", { type: "checkbox", "aria-label": `${result.title} seç` });
           check.addEventListener("change", () => {
-            const ids = new Set(results.filter((_, index) => resultList.children[index]?.querySelector("input")?.checked).map((item) => item.conversationId));
+            const key = `${result.conversationId}:${result.id}`;
+            check.checked ? selectedPassages.set(key, result) : selectedPassages.delete(key);
+            const ids = new Set([...selectedPassages.values()].map((item) => item.conversationId));
             selection.clear(); for (const id of ids) selection.add(id);
-            selectedActions.hidden = !selection.size; selectedActions.firstChild.textContent = `${selection.size} sohbet arşivle`;
+            selectedActions.hidden = !selectedPassages.size; archiveSelected.textContent = `${selection.size} sohbeti arşivle`;
+            deleteSelected.textContent = `${selection.size} sohbeti sil`; exportSelectedPassages.textContent = `${selectedPassages.size} eşleşen iletiyi Markdown indir`;
           });
           const main = el("div", { class: "cc-result-body" });
           const title = el("button", { class: "cc-link-button cc-result-title", text: result.title, onclick: () => CC.adapter.openSearchResult(result.conversationId, result.id) });
@@ -227,6 +245,7 @@
     query.addEventListener("keydown", (event) => { if (event.key === "Enter") search(); });
     archiveSelected.addEventListener("click", () => CC.organization.manageSelectedChats([...selection], "archive"));
     deleteSelected.addEventListener("click", () => CC.organization.manageSelectedChats([...selection], "delete"));
+    exportSelectedPassages.addEventListener("click", () => CC.exporter.exportPassages([...selectedPassages.values()], query.value.trim()));
     if (!stats.messages) resultList.append(el("p", { class: "cc-empty", text: "Önce sohbetlerini bu cihazda tara. Dizin konuşma metinlerini yerelde tutar ve istediğinde temizlenebilir." }));
 
     indexCurrentButton.addEventListener("click", async () => {

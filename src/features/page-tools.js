@@ -2,13 +2,18 @@
   const CC = globalThis.ChatCompanion;
   if (!CC) return;
   let observer, scanTimer, activeTimer, baseline = new Set(), initialized = false, suspendCountUntil = 0, toolSettings = {}, generationStateKnown = false, wasGenerating = false, nativeFolderRoot = null, lastInteractionAt = Date.now(), titleRestoreTimer = null;
-  const today = () => new Date().toISOString().slice(0, 10);
+  const today = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; };
 
   function messageNode(authorNode) { return authorNode.closest("[data-message-id]") || authorNode; }
   function messageText(node) {
     const copy = node.cloneNode(true);
     copy.querySelectorAll(".cc-companion-actions,.cc-message-label,.cc-message-collapse").forEach((item) => item.remove());
     return (copy.innerText || copy.textContent || "").replace(/\s+/g, " ").trim();
+  }
+  function messageBodyText(node) {
+    const copy = node.cloneNode(true);
+    copy.querySelectorAll(".cc-companion-actions,.cc-message-label,.cc-message-collapse").forEach((item) => item.remove());
+    return (copy.innerText || copy.textContent || "").replace(/\r/g, "").replace(/[\t ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   }
   function messageKey(node) { return node.getAttribute("data-message-id") || `${CC.adapter.getCurrentConversationId()}:${messageText(node).slice(0, 80)}`; }
   function addActionButton(parent, text, title, action, label) {
@@ -68,7 +73,7 @@
     if (!sidebar) return;
     if (!force && nativeFolderRoot?.isConnected && nativeFolderRoot.parentElement === sidebar) return;
     nativeFolderRoot?.remove();
-    const folders = (await CC.repository.getFolders().catch(() => [])).sort((left, right) => Number(right.pinned) - Number(left.pinned) || CC.normalize(left.name).localeCompare(CC.normalize(right.name), "tr"));
+    const folders = (await CC.repository.getFolders().catch(() => [])).sort((left, right) => Number(right.pinned) - Number(left.pinned) || String(left.parentId || "").localeCompare(String(right.parentId || "")) || (Number(left.position) || 0) - (Number(right.position) || 0) || CC.normalize(left.name).localeCompare(CC.normalize(right.name), "tr"));
     const root = document.createElement("section"); root.className = "cc-native-folder-root"; root.setAttribute("data-cc-ui", "true");
     const heading = document.createElement("div"); heading.className = "cc-native-folder-heading"; heading.textContent = "Klasörler"; root.append(heading);
     for (const folder of folders.slice(0, 12)) {
@@ -132,6 +137,12 @@
         speechSynthesis.speak(utterance);
       }, "Yanıtı seslendir");
     }
+    if (role === "assistant" && CC.prompts?.handoffRequestedForCurrentConversation?.()) {
+      addActionButton(actions, "Yeni sohbete taslak olarak taşı", "Bu devir yanıtını gözden geçirip yeni sohbet mesaj alanına taslak olarak aktar", () => {
+        if (isGenerating()) return CC.ui.toast("Yanıt hâlâ hazırlanıyor. Tamamlanmasını bekleyip yeniden deneyin.", "error");
+        CC.prompts.carryAnswerToNewConversation(messageBodyText(wrapper), CC.adapter.getCurrentConversationTitle?.() || "Önceki sohbet");
+      }, "Devir yanıtını taşı");
+    }
     for (const [index, audio] of [...wrapper.querySelectorAll("audio")].entries()) {
       addActionButton(actions, "Sesi indir", "Bu iletideki mevcut ses dosyasını indir", () => downloadAttachedAudio(audio, index), "Sesi indir");
     }
@@ -173,6 +184,15 @@
       form.append(meter);
     }
     if (toolSettings.contextEstimate === false) form.querySelector(".cc-context-meter")?.remove();
+    if (!form.querySelector(":scope > .cc-handoff-row")) {
+      const row = document.createElement("div"); row.className = "cc-handoff-row";
+      const button = document.createElement("button"); button.type = "button"; button.className = "cc-handoff-shortcut"; button.textContent = "Devir özeti";
+      button.title = "Eski sohbetten yapılandırılmış bir devir özeti istemi hazırlar; mesajı otomatik göndermez.";
+      button.addEventListener("click", () => CC.prompts.prepareHandoffSummary());
+      row.append(button); form.append(row);
+    }
+    const handoffButton = form.querySelector(".cc-handoff-shortcut");
+    if (handoffButton && handoffButton.hidden !== !CC.adapter.getCurrentConversationId()) handoffButton.hidden = !CC.adapter.getCurrentConversationId();
     if (toolSettings.wordCounter !== false && !form.querySelector(":scope > .cc-live-counter")) {
       const counter = document.createElement("div"); counter.className = "cc-live-counter"; counter.textContent = "0 sözcük · 0 karakter";
       form.append(counter);
@@ -183,18 +203,32 @@
 
   async function updateContextMeter() {
     const settings = await CC.repository.getSettings();
-    if (settings.contextEstimate === false) return;
     const form = CC.prompts?.composer?.()?.closest("form");
+    const handoffButton = form?.querySelector(".cc-handoff-shortcut");
+    const hasConversation = Boolean(CC.adapter.getCurrentConversationId());
+    if (handoffButton && handoffButton.hidden !== !hasConversation) handoffButton.hidden = !hasConversation;
+    if (settings.contextEstimate === false) {
+      if (handoffButton && handoffButton.textContent !== "Devir özeti") handoffButton.textContent = "Devir özeti";
+      if (handoffButton) delete handoffButton.dataset.recommended;
+      return;
+    }
     const meter = form?.querySelector(".cc-context-meter");
     if (!meter) return;
-    const text = [...document.querySelectorAll('[data-message-author-role]')].map((node) => node.innerText || "").join(" ");
+    const text = [...document.querySelectorAll('[data-message-author-role]')].map(messageText).join(" ");
     const tokens = Math.ceil(text.length / 4);
     const target = Math.max(1000, Number(settings.contextTarget) || 128000);
     const percent = Math.min(100, Math.round(tokens / target * 100));
     const fill = meter.querySelector(".cc-context-fill"), caption = meter.querySelector(".cc-context-caption");
-    if (fill) fill.style.width = `${percent}%`;
+    if (fill && fill.style.width !== `${percent}%`) fill.style.width = `${percent}%`;
     const messageCount = document.querySelectorAll('[data-message-author-role]').length;
-    if (caption) caption.textContent = `Bağlam tahmini: ~${tokens.toLocaleString("tr-TR")} / ${target.toLocaleString("tr-TR")} token · yaklaşık %${percent} · ${messageCount} görünür ileti`;
+    const captionText = `Bağlam tahmini: ~${tokens.toLocaleString("tr-TR")} / ${target.toLocaleString("tr-TR")} token · yaklaşık %${percent} · ${messageCount} görünür ileti`;
+    if (caption && caption.textContent !== captionText) caption.textContent = captionText;
+    if (handoffButton) {
+      const recommended = percent >= 70;
+      const label = recommended ? "Devir özeti önerilir" : "Devir özeti";
+      if (handoffButton.textContent !== label) handoffButton.textContent = label;
+      if (handoffButton.dataset.recommended !== String(recommended)) handoffButton.dataset.recommended = String(recommended);
+    }
   }
 
   function handleComposerInput(event) {
@@ -256,6 +290,9 @@
         const usage = await CC.repository.getUsage();
         usage.days ||= {}; usage.days[today()] ||= { messages: 0, activeMinutes: 0 };
         usage.days[today()].activeMinutes++;
+        usage.days[today()].activeHours ||= {};
+        const hour = String(new Date().getHours());
+        usage.days[today()].activeHours[hour] = (usage.days[today()].activeHours[hour] || 0) + 1;
         await CC.repository.saveUsage(usage);
       }, 60000);
     }

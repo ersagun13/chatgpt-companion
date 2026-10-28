@@ -4,7 +4,11 @@
   const nav = ["home", "search", "manage", "organize", "prompts", "bookmarks", "labels", "media", "insights", "export", "settings"];
   const names = { home: "home", search: "search", manage: "manage", organize: "organize", prompts: "prompts", bookmarks: "bookmarks", labels: "Mesaj etiketleri", media: "media", insights: "insights", export: "export", settings: "settings" };
   const icons = { home: "⌂", search: "⌕", manage: "▤", organize: "▦", prompts: "✦", bookmarks: "☆", labels: "◉", media: "▧", insights: "◷", export: "⇧", settings: "⚙" };
-  const quickItems = [["search", "Tüm sohbetlerde ara", "⌕"], ["searchCurrent", "Açık sohbette ara", "⌕"], ["manage", "Sohbetler", "▤"], ["organize", "Klasörler", "▦"], ["prompts", "İstemler", "✦"], ["bookmarks", "Yer imleri", "☆"], ["labels", "Mesaj etiketleri", "◉"]];
+  const quickCatalog = {
+    search: ["Tüm sohbetlerde ara", "⌕"], searchCurrent: ["Açık sohbette ara", "⌕"], manage: ["Sohbetler", "▤"],
+    organize: ["Klasörler", "▦"], prompts: ["İstemler", "✦"], bookmarks: ["Yer imleri", "☆"], labels: ["Mesaj etiketleri", "◉"],
+    media: ["Medya galerisi", "▧"], insights: ["Kullanım özeti", "◷"], export: ["Dışa aktar", "⇧"]
+  };
 
   function ensure() {
     if (CC.state.host?.isConnected) return;
@@ -21,13 +25,21 @@
     const launcher = CC.make("div", { class: "cc-launcher" });
     const quickButton = CC.make("button", { class: "cc-quick-button", type: "button", text: "＋", "aria-label": "Hızlı araçları aç", title: "Hızlı araçlar", "aria-expanded": "false" });
     const quickMenu = CC.make("div", { class: "cc-quick-menu", role: "menu", "aria-label": "Hızlı araçlar", hidden: true });
-    for (const [view, title, icon] of quickItems) {
-      quickMenu.append(CC.make("button", { class: "cc-quick-item", type: "button", role: "menuitem", onclick: () => {
+    function renderQuickMenu(slots) {
+      const selected = (Array.isArray(slots) ? slots : ["search", "searchCurrent", "manage", "organize", "prompts"]).filter((item, index, values) => quickCatalog[item] && values.indexOf(item) === index).slice(0, 5);
+      if (!selected.length) selected.push("search", "manage", "organize", "prompts", "bookmarks");
+      quickMenu.replaceChildren();
+      for (const view of selected) {
+        const [title, icon] = quickCatalog[view];
+        quickMenu.append(CC.make("button", { class: "cc-quick-item", type: "button", role: "menuitem", onclick: () => {
         quickMenu.hidden = true; quickButton.setAttribute("aria-expanded", "false");
         if (view === "searchCurrent") CC.state.searchCurrentOnly = true;
         CC.ui.open(view === "searchCurrent" ? "search" : view);
-      } }, [CC.make("span", { text: icon, "aria-hidden": "true" }), CC.make("span", { text: title })]));
+        } }, [CC.make("span", { text: icon, "aria-hidden": "true" }), CC.make("span", { text: title })]));
+      }
     }
+    CC.repository.getSettings().then((settings) => renderQuickMenu(settings.quickActionSlots)).catch(() => renderQuickMenu());
+    document.addEventListener("cc:settings-changed", (event) => renderQuickMenu(event.detail?.quickActionSlots));
     quickButton.addEventListener("click", (event) => {
       event.stopPropagation();
       quickMenu.hidden = !quickMenu.hidden;
@@ -89,7 +101,7 @@
   CC.ui.refreshFolderShortcuts = async () => {
     const shortcuts = CC.state.folderShortcuts;
     if (!shortcuts) return;
-    const folders = (await CC.repository.getFolders().catch(() => [])).sort((a, b) => Number(b.pinned) - Number(a.pinned) || CC.normalize(a.name).localeCompare(CC.normalize(b.name), "tr"));
+    const folders = (await CC.repository.getFolders().catch(() => [])).sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(a.parentId || "").localeCompare(String(b.parentId || "")) || (Number(a.position) || 0) - (Number(b.position) || 0) || CC.normalize(a.name).localeCompare(CC.normalize(b.name), "tr"));
     if (CC.state.folderFilterId && !folders.some((folder) => folder.id === CC.state.folderFilterId)) CC.state.folderFilterId = "";
     shortcuts.replaceChildren(CC.make("span", { class: "cc-sidebar-section-label", text: "KLASÖRLER" }));
     for (const folder of folders.slice(0, 12)) {

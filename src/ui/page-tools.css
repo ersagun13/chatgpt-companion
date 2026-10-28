@@ -14,6 +14,10 @@
 .cc-context-meter { display:flex; align-items:center; justify-content:flex-end; gap:7px; margin-top:5px; color:#8b93a4; font:10px/1.4 system-ui,sans-serif; text-align:right; }
 .cc-context-track { display:block; width:64px; height:5px; flex:none; overflow:hidden; border-radius:99px; background:color-mix(in srgb,currentColor 18%,transparent); }
 .cc-context-fill { display:block; height:100%; width:0; border-radius:inherit; background:#a98beb; transition:width .25s; }
+.cc-handoff-row { display:flex; justify-content:flex-end; margin-top:4px; }
+.cc-handoff-shortcut { border:1px solid #9b7ce080; border-radius:8px; padding:4px 9px; color:inherit; background:color-mix(in srgb,#a98beb 12%,Canvas); font:600 10px/1.35 system-ui,sans-serif; cursor:pointer; }
+.cc-handoff-shortcut:hover,.cc-handoff-shortcut[data-recommended="true"] { border-color:#9b7ce0; background:color-mix(in srgb,#a98beb 25%,Canvas); }
+.cc-handoff-shortcut[hidden] { display:none!important; }
 .cc-live-counter { margin-top:5px; color:#8b93a4; font:10px/1.4 system-ui,sans-serif; text-align:right; }
 .cc-search-match { outline:2px solid #b7a0ff!important; outline-offset:4px!important; border-radius:8px!important; transition:outline-color .4s; }
 .cc-bookmark-card,.cc-media-card,.cc-metric-card,.cc-limit-card { border:1px solid var(--line,#313b4b); border-radius:14px; padding:12px; background:var(--surface,#1e2531); }
@@ -25,6 +29,10 @@
 .cc-media-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin:14px 0; }
 .cc-media-card { min-width:0; padding:8px; }
 .cc-media-card img { display:block; width:100%; height:140px; border-radius:9px; object-fit:cover; background:#0e1118; }
+.cc-media-card video { display:block; width:100%; max-height:150px; border-radius:9px; background:#0e1118; }
+.cc-media-card audio { display:block; width:100%; max-width:100%; }
+.cc-media-file-link { display:grid; place-items:center; min-height:90px; border:1px dashed var(--line,#313b4b); border-radius:9px; color:var(--accent,#b7a0ff); text-align:center; font:600 11px/1.4 system-ui,sans-serif; }
+.cc-media-card>.cc-checkline { margin:6px 0; }
 .cc-media-card img[hidden] { display:none; }
 .cc-media-caption { display:block; overflow:hidden; margin:7px 0; color:var(--text,#f4f5f8); font:600 11px/1.4 system-ui,sans-serif; text-overflow:ellipsis; white-space:nowrap; }
 .cc-media-expired::before { display:block; padding:14px 4px; color:var(--muted,#9ca8b8); content:"Görsel bağlantısı artık kullanılamıyor"; font:11px/1.4 system-ui,sans-serif; }
@@ -35,6 +43,9 @@
 .cc-usage-chart { display:flex; align-items:end; gap:3px; height:122px; border-bottom:1px solid var(--line,#313b4b); padding:4px 3px 0; }
 .cc-usage-bar-wrap { display:flex; align-items:end; flex:1; height:100%; min-width:2px; }
 .cc-usage-bar { display:block; width:100%; min-height:3px; border-radius:4px 4px 0 0; background:linear-gradient(0deg,#7765bd,var(--accent,#b7a0ff)); }
+.cc-hour-chart { display:flex; align-items:end; gap:3px; height:100px; border-bottom:1px solid var(--line,#313b4b); padding:4px 3px 0; }
+.cc-hour-column { display:flex; flex:1; flex-direction:column; align-items:stretch; justify-content:end; height:100%; min-width:3px; color:var(--muted,#9ca8b8); text-align:center; font:9px/1.2 system-ui,sans-serif; }
+.cc-hour-column .cc-usage-bar { flex:none; }
 .cc-limit-card { display:flex; align-items:center; gap:9px; color:var(--text,#f4f5f8); font:11px/1.45 system-ui,sans-serif; }
 .cc-limit-dot { width:9px; height:9px; flex:none; border-radius:50%; background:#6ac79d; box-shadow:0 0 0 4px #6ac79d20; }
 .cc-limit-active .cc-limit-dot { background:#ee8b71; box-shadow:0 0 0 4px #ee8b7120; }

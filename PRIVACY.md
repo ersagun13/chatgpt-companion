@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: 2026-10-27
+Last updated: 2026-10-28
 
 ChatGPT Companion is a local Chrome extension. It does not use a Companion-operated server, analytics service, advertising service, or cloud synchronization.
 
@@ -9,19 +9,20 @@ ChatGPT Companion is a local Chrome extension. It does not use a Companion-opera
 - Conversation titles, IDs, dates, archive state, and your folder/tag metadata are kept in Chrome local extension storage.
 - If you start a full-history scan, conversation messages and related search records are saved in IndexedDB in the current browser profile. This can include sensitive personal or work information from your chats.
 - Companion does not add application-level encryption to these local records. A person or process that can access your Windows account or Chrome profile may be able to read them. Do not index sensitive chats on a shared or untrusted device.
-- Prompts, chains, bookmarks, notes, preferences, observed activity summaries, and media favorites are kept in Chrome local extension storage.
+- Prompts, prompt favorites, chains, bookmarks, notes, preferences, observed activity summaries, media favorites, and locally hidden media entries are kept in Chrome local extension storage.
+- The handoff prompt is placed in the current ChatGPT composer and is not sent automatically. If you choose to send it, ChatGPT generates the summary in that conversation. When you click the transfer action, Companion reads that assistant response from the page and temporarily stores the new-chat draft in this tab's `sessionStorage`; it clears the draft after placing it in the new composer or when it expires. The draft is sent to ChatGPT only if you manually submit it there. Review the summary before sending, especially if the old chat contains sensitive details.
 - Temporary work data used during ZIP exports is held in the extension's local IndexedDB and cleared after the operation completes.
 
 ## Network requests
 
 - To collect the history catalog, read a conversation, rename it, or archive, restore, or delete a chat, the extension requests data from `chatgpt.com` using the browser's current signed-in session. It does not store your session token in Companion storage.
-- When you open the media gallery or choose to download audio or images, the browser requests the original media URLs found in ChatGPT messages. Cross-origin image previews and downloads omit credentials and referrer information; the destination host can still receive the request and your network address.
+- When you open the media gallery or choose to download media, the browser requests original image, video, audio, or explicit file URLs found in ChatGPT messages. Cross-origin previews and downloads omit credentials and referrer information; the destination host can still receive the request and your network address.
 - The extension does not send chat content to its maintainers, GitHub, or a separate Companion backend. GitHub is used only when you visit the public source/release pages yourself.
 
 ## Your choices and deletion
 
 - Loading the chat catalog does not index message contents. Full-text search starts only when you choose to scan chats.
-- Companion JSON backups include settings and organization metadata, but exclude the full-text message index. Conversation exports that you request are saved to your device as files.
+- Companion JSON backups include settings and organization metadata, but exclude the full-text message index. The optional `.ccbackup` full backup includes that index and metadata, compressed and encrypted locally using AES-GCM with a PBKDF2-derived key. The password is used in memory and is not saved by Companion. File size is limited to 60 MB and decompressed content to 100 MB. If the password is lost, that backup cannot be opened. Conversation exports that you request are saved to your device as files.
 - Use **Search chats → Clear index** to erase indexed messages, or **Settings → Clear all extension data** to erase Companion's local data. Removing local data does not delete conversations from ChatGPT.
 - Deleting a chat through Companion requests a permanent deletion from your ChatGPT account. Review the confirmation carefully; it cannot be undone.
 - Browser-profile backups, device backups, and Chrome's own storage behavior are outside Companion's control.
@@ -40,9 +41,10 @@ ChatGPT Companion yerel çalışan bir Chrome eklentisidir. Companion tarafında
 - **Tüm sohbetleri tara** işlemini başlatırsanız, sohbet mesajları ve arama kayıtları mevcut Chrome profilindeki IndexedDB alanına kaydedilir. Bu içerik hassas kişisel veya iş verileri içerebilir.
 - Companion bu yerel kayıtları uygulama düzeyinde şifrelemez. Windows hesabınıza veya Chrome profilinize erişebilen kişiler ya da işlemler bu verileri okuyabilir. Paylaşılan veya güvenilmeyen cihazda hassas sohbetleri dizine almayın.
 - Sohbet kataloğunu okumak, sohbet içeriğine erişmek, sohbet adını değiştirmek ve arşivleme, arşivden çıkarma veya silme işlemleri için istekler mevcut oturumunuzla `chatgpt.com` adresine gönderilir. Oturum belirteci Companion depolamasına yazılmaz.
-- Medya galerisini açtığınızda veya ses/görsel indirmeyi seçtiğinizde tarayıcı ChatGPT mesajlarındaki özgün medya adreslerine istek gönderir. Çapraz site görsel ve indirme isteklerinde kimlik bilgileri ve yönlendiren sayfa bilgisi gönderilmez; hedef sunucu isteği ve ağ adresinizi yine görebilir.
+- Medya galerisini açtığınızda veya indirmeyi seçtiğinizde tarayıcı ChatGPT mesajlarındaki özgün görsel, video, ses veya açık dosya adreslerine istek gönderir. Çapraz site önizleme ve indirme isteklerinde kimlik bilgileri ve yönlendiren sayfa bilgisi gönderilmez; hedef sunucu isteği ve ağ adresinizi yine görebilir.
 - Eklenti sohbet içeriğini geliştiricilere, GitHub'a veya ayrı bir Companion sunucusuna göndermez.
-- JSON yedeği tam metin arama dizinini içermez. **Sohbet ara → Dizini temizle** veya **Ayarlar → Tüm eklenti verilerini temizle** seçenekleri Companion'ın yerel verilerini siler; ChatGPT sohbetlerini silmez.
+- Devir özeti istemi açık sohbetin mesaj alanına eklenir ve kendiliğinden gönderilmez. Siz eski sohbette gönderirseniz özeti ChatGPT üretir. Devir yanıtının altındaki taşıma düğmesine bastığınızda Companion, bu yanıtı sayfadan okur ve yeni sohbet taslağını sekmenin `sessionStorage` alanında geçici olarak tutar; yeni mesaj alanına aktarıldıktan veya süresi dolduktan sonra taslak temizlenir. ChatGPT'ye yalnızca yeni sohbette siz gönderirseniz iletilir. Özellikle eski sohbette hassas bilgi varsa özeti göndermeden önce gözden geçirin.
+- JSON yedeği tam metin arama dizinini içermez. İsteğe bağlı `.ccbackup` tam yedeği dizini de içerir; AES-GCM ve PBKDF2 tabanlı anahtarla bu cihazda şifrelenir. Parola bellekte kullanılır ve Companion tarafından saklanmaz. Dosya boyutu en fazla 60 MB, açılmış içerik en fazla 100 MB olabilir. Parola kaybolursa bu yedek açılamaz. **Sohbet ara → Dizini temizle** veya **Ayarlar → Tüm eklenti verilerini temizle** seçenekleri Companion'ın yerel verilerini siler; ChatGPT sohbetlerini silmez.
 - Companion üzerinden sohbet silme, ChatGPT hesabınızda kalıcı silme isteği gönderir ve geri alınamaz.
 
 ChatGPT'nin geçmiş ve hesap işlemleri özel arayüz uç noktalarına bağlıdır. Bu uç noktalar değişebilir. Eklenti oturumunuzda ChatGPT'nin erişime açmadığı sohbetleri okuyamaz.

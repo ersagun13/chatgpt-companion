@@ -2,7 +2,7 @@
   const CC = globalThis.ChatCompanion;
   if (!CC) return;
   const el = (...args) => CC.make(...args);
-  const dayKey = (date) => date.toISOString().slice(0, 10);
+  const dayKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   function streak(days) {
     let total = 0, cursor = new Date();
     if (!days[dayKey(cursor)]?.messages) cursor.setDate(cursor.getDate() - 1);
@@ -43,7 +43,14 @@
   CC.features.register({ id: "insights", titleKey: "insights", async render(container) {
     container.append(el("div", { class: "cc-view-heading" }, [el("div", {}, [el("span", { class: "cc-eyebrow", text: "KİŞİSEL ANALİTİK" }), el("h2", { text: "Kullanım özeti" }), el("p", { class: "cc-muted", text: "Yalnızca bu tarayıcıda gözlemlenen etkinliği gösterir; ChatGPT hesap kotasını tahmin etmez." })]), el("span", { class: "cc-view-icon", text: "◷" })]));
     const usage = await CC.repository.getUsage();
-    const year = new Date().getFullYear();
+    const currentYear = new Date().getFullYear();
+    const availableYears = [...new Set([currentYear, ...Object.keys(usage.days || {}).map((date) => Number(date.slice(0, 4))).filter(Number.isFinite)])].sort((a, b) => b - a);
+    const preferredYear = Number(CC.state.insightsYear);
+    const year = availableYears.includes(preferredYear) ? preferredYear : currentYear;
+    const yearControl = el("select", { class: "cc-select", "aria-label": "Yıllık kullanım özeti yılı" });
+    for (const availableYear of availableYears) yearControl.append(el("option", { value: String(availableYear), text: String(availableYear), selected: availableYear === year }));
+    yearControl.addEventListener("change", () => { CC.state.insightsYear = Number(yearControl.value); CC.ui.render("insights"); });
+    container.append(el("label", { class: "cc-field-label", text: "Yıllık özeti görüntüle" }), yearControl);
     const days = Object.entries(usage.days || {}).filter(([date]) => date.startsWith(`${year}-`));
     const messages = days.reduce((sum, [, item]) => sum + (item.messages || 0), 0);
     const minutes = days.reduce((sum, [, item]) => sum + (item.activeMinutes || 0), 0);
@@ -66,6 +73,17 @@
       bar.append(el("i", { class: "cc-usage-bar", style: `height:${Math.max(4, Math.round(item.value / max * 100))}%` })); chart.append(bar);
     }
     container.append(chart, el("p", { class: "cc-muted", text: "Sayaç yalnızca eklenti açıkken görülen yeni mesajları ve son etkileşimi olan görünür sekme dakikalarını sayar; geçmiş kullanım verisi yoktur." }));
+    const hourTotals = Array(24).fill(0);
+    for (const [, item] of days) for (const [hour, minutesAtHour] of Object.entries(item.activeHours || {})) if (Number(hour) >= 0 && Number(hour) < 24) hourTotals[Number(hour)] += Number(minutesAtHour) || 0;
+    const hourMax = Math.max(1, ...hourTotals);
+    const hourChart = el("div", { class: "cc-hour-chart", role: "img", "aria-label": `${year} yılı için yerel saatlere göre etkin kullanım dakikaları` });
+    for (const [hour, total] of hourTotals.entries()) {
+      const column = el("div", { class: "cc-hour-column", title: `${String(hour).padStart(2, "0")}:00 civarı · ${total} dakika` });
+      column.append(el("i", { class: "cc-usage-bar", style: `height:${Math.max(total ? 5 : 0, Math.round(total / hourMax * 100))}%` }));
+      if (hour % 4 === 0) column.append(el("span", { text: String(hour).padStart(2, "0") }));
+      hourChart.append(column);
+    }
+    container.append(el("h3", { text: `${year} · Yerel saatlere göre etkin kullanım` }), hourChart, el("p", { class: "cc-muted", text: "Saat dağılımı yalnızca eklenti açık ve sekmeyle yakın zamanda etkileşim varken sayılan dakikalara dayanır." }));
     const wrapped = el("button", { class: "cc-button cc-primary", text: `${year} özet kartını indir`, onclick: () => downloadWrapped({ year, messages, activeDays, minutes, longest: yearLongestStreak }) });
     const reset = el("button", { class: "cc-button cc-quiet", text: "Yerel kullanım verilerini temizle", onclick: async () => {
       if (!(await CC.ui.confirm("Kullanım verilerini sil", "Bu cihazda tutulan günlük sayaçlar ve etkinlik süreleri silinecek."))) return;

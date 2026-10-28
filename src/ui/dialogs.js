@@ -35,4 +35,29 @@
     input.addEventListener("keydown", (event) => { if (event.key === "Enter") finish(input.value.trim()); if (event.key === "Escape") finish(null); });
     input.focus();
   });
+
+  CC.ui.password = (title, message, confirmAgain = false) => new Promise((resolve) => {
+    if (!CC.state.shadow) { resolve(null); return; }
+    const overlay = CC.make("div", { class: "cc-modal-backdrop", role: "presentation" });
+    const card = CC.make("section", { class: "cc-modal", role: "dialog", "aria-modal": "true", "aria-label": title });
+    const first = CC.make("input", { class: "cc-input", type: "password", autocomplete: confirmAgain ? "new-password" : "current-password", placeholder: confirmAgain ? "Yeni yedek parolası" : "Yedek parolası", "aria-label": "Yedek parolası" });
+    const second = confirmAgain ? CC.make("input", { class: "cc-input", type: "password", autocomplete: "new-password", placeholder: "Parolayı tekrar yazın", "aria-label": "Yedek parolası tekrarı" }) : null;
+    const feedback = CC.make("p", { class: "cc-muted", hidden: true });
+    const actions = CC.make("div", { class: "cc-modal-actions" });
+    const cancel = CC.make("button", { class: "cc-button cc-secondary", text: CC.tr("cancel"), onclick: () => finish(null) });
+    const submit = CC.make("button", { class: "cc-button cc-primary", text: confirmAgain ? "Şifreli yedeği oluştur" : "Yedeği aç", onclick: complete });
+    actions.append(cancel, submit);
+    card.append(CC.make("h2", { text: title }), CC.make("p", { text: message }), first);
+    if (second) card.append(second);
+    card.append(feedback, actions); overlay.append(card); CC.state.shadow.append(overlay);
+    function finish(value) { overlay.remove(); resolve(value); }
+    function complete() {
+      if (first.value.length < 12) { feedback.textContent = "Yedek parolası en az 12 karakter olmalı."; feedback.hidden = false; first.focus(); return; }
+      if (second && first.value !== second.value) { feedback.textContent = "Parolalar eşleşmiyor."; feedback.hidden = false; second.focus(); return; }
+      finish(first.value);
+    }
+    for (const input of [first, second].filter(Boolean)) input.addEventListener("keydown", (event) => { if (event.key === "Enter") complete(); if (event.key === "Escape") finish(null); });
+    overlay.addEventListener("click", (event) => { if (event.target === overlay) finish(null); });
+    first.focus();
+  });
 })();

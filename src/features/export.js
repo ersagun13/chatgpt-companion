@@ -93,12 +93,12 @@
     return { ok: true, filename: CC.state.pendingDownload.filename };
   }
 
-  async function exportSelection(ids, format = "zip") {
+  async function exportSelection(ids, format = "zip", options = {}) {
     const selected = [...new Set(ids)].filter(Boolean);
     if (!selected.length) return { ok: false, reason: "Dışa aktarılacak sohbet seçilmedi." };
     const jobId = CC.id();
     await CC.tempStore.clear(jobId);
-    const job = { id: jobId, type: "export", format, ids: selected, cursor: 0, completed: 0, initialUrl: `${location.pathname}${location.search}${location.hash}`, startedAt: Date.now() };
+    const job = { id: jobId, type: "export", format, ids: selected, folderPaths: options.folderPaths || {}, cursor: 0, completed: 0, initialUrl: `${location.pathname}${location.search}${location.hash}`, startedAt: Date.now() };
     await CC.repository.saveJob(job);
     CC.ui.open("manage");
     await continueExportJob();
@@ -122,7 +122,10 @@
     } else {
       const format = job.format === "zip" ? "markdown" : job.format.replace(/^zip-/, "");
       const extension = extensionFor(format);
-      const files = records.map((record, index) => ({ name: `${String(index + 1).padStart(3, "0")}-${safeName(record.title)}.${extension}`, data: contentFor(record, format) }));
+      const files = records.map((record, index) => {
+        const path = String(job.folderPaths?.[record.id] || "").split("/").map(safeName).filter(Boolean).join("/");
+        return { name: `${path ? `${path}/` : ""}${String(index + 1).padStart(3, "0")}-${safeName(record.title)}.${extension}`, data: contentFor(record, format) };
+      });
       result = { ok: true, blob: zipStore(files), filename: `chatgpt-sohbetleri-${new Date().toISOString().slice(0, 10)}.zip` };
     }
     if (!result.ok) throw new Error(result.reason || "Dosya oluşturulamadı.");
@@ -195,7 +198,39 @@
     return download(zipStore(files), filename || `chatgpt-export-${new Date().toISOString().slice(0, 10)}.zip`);
   }
 
-  CC.exporter = { exportConversation, exportCurrent, exportSelection, continueExportJob, cancelExport, downloadPending, contentFor, downloadZipFiles };
+  async function exportPassages(results, query = "") {
+    const selected = Array.isArray(results) ? results.filter((item) => item && typeof item.text === "string") : [];
+    if (!selected.length) return CC.ui.toast("Dışa aktarılacak arama eşleşmesi seçilmedi.", "error");
+    const body = `# ChatGPT arama eşleşmeleri\n\nArama: ${query}\nSeçilen ileti: ${selected.length}\n\n${selected.map((item) => `## ${item.title}\n\n${item.role === "user" ? "Kullanıcı" : "ChatGPT"}${item.timestamp ? ` · ${item.timestamp}` : ""}\n\nSohbet: ${new URL(`/c/${encodeURIComponent(item.conversationId)}`, location.origin).href}\n\n${item.text}`).join("\n\n---\n\n")}`;
+    return download(new Blob([body], { type: "text/markdown;charset=utf-8" }), `chatgpt-arama-eslesmeleri-${new Date().toISOString().slice(0, 10)}.md`);
+  }
+
+  async function exportFolder(folderId, format = "zip") {
+    const [folders, chats] = await Promise.all([CC.repository.getFolders(), CC.organization.visibleChats("all")]);
+    const byId = new Map(folders.map((folder) => [folder.id, folder]));
+    if (!byId.has(folderId)) return CC.ui.toast("Klasör bulunamadı.", "error");
+    const descendants = new Set([folderId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const folder of folders) if (folder.parentId && descendants.has(folder.parentId) && !descendants.has(folder.id)) { descendants.add(folder.id); changed = true; }
+    }
+    const selected = chats.filter((chat) => (chat.folderIds || (chat.folderId ? [chat.folderId] : [])).some((id) => descendants.has(id)));
+    if (!selected.length) return CC.ui.toast("Bu klasörde dışa aktarılacak sohbet yok.", "error");
+    const relativePath = (id) => {
+      const parts = [];
+      let current = byId.get(id);
+      while (current && current.id !== folderId) { parts.unshift(current.name); current = byId.get(current.parentId); }
+      return parts.join("/");
+    };
+    const folderPaths = Object.fromEntries(selected.map((chat) => {
+      const folderIdForChat = (chat.folderIds || (chat.folderId ? [chat.folderId] : [])).find((id) => descendants.has(id));
+      return [chat.id, relativePath(folderIdForChat)];
+    }));
+    await exportSelection(selected.map((chat) => chat.id), format, { folderPaths });
+  }
+
+  CC.exporter = { exportConversation, exportCurrent, exportSelection, exportFolder, exportPassages, continueExportJob, cancelExport, downloadPending, contentFor, downloadZipFiles };
   CC.features.register({ id: "export", titleKey: "export", async render(container) {
     container.append(el("h2", { text: "Dışa aktar" }));
     container.append(el("p", { class: "cc-note", text: "TXT, Markdown, JSON veya elektronik tablo için CSV olarak dışa aktarın. Seçilen sohbetleri ZIP olarak kaydetmek için Sohbetleri yönet bölümünü kullanın." }));

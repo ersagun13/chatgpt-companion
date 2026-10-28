@@ -5,14 +5,15 @@
 
   CC.features.register({ id: "settings", titleKey: "settings", async render(container) {
     container.append(el("h2", { text: "Ayarlar ve yedek" }));
-    container.append(el("p", { class: "cc-note", text: "Klasörler, istemler, yer imleri ve sohbet dizini bu cihazda saklanır. Tam metin araması için hazırlanan ileti dizini yedek dosyasına alınmaz." }));
+    container.append(el("p", { class: "cc-note", text: "Klasörler, istemler ve yerel arama dizini bu cihazda kalır. Standart JSON yedeği yalnızca düzenleme bilgilerini taşır; ileti metinlerini içeren tam yedek parola ile şifrelenir." }));
 
-    const [folders, tags, metadata, historyCatalog, prompts, bookmarks, rules, favorites] = await Promise.all([
+    const [folders, tags, metadata, historyCatalog, prompts, promptFavorites, bookmarks, rules, favorites, hiddenMedia, indexStats] = await Promise.all([
       CC.repository.getFolders(), CC.repository.getTags(), CC.repository.getChatMeta(), CC.repository.getHistoryCatalog(),
-      CC.repository.getPrompts(), CC.repository.getBookmarks(), CC.repository.getTagRules(), CC.repository.getMediaFavorites()
+      CC.repository.getPrompts(), CC.repository.getPromptFavorites(), CC.repository.getBookmarks(), CC.repository.getTagRules(),
+      CC.repository.getMediaFavorites(), CC.repository.getHiddenMedia(), CC.messageIndex.stats().catch(() => ({ chats: 0, messages: 0 }))
     ]);
     const metaCount = Object.keys(metadata).length;
-    container.append(el("p", { class: "cc-muted", text: `${historyCatalog.length} bulunan sohbet · ${folders.length} klasör · ${tags.length} etiket · ${metaCount} sohbet için yerel bilgi · ${prompts.length} özel istem · ${bookmarks.length} yer imi · ${rules.length} akıllı kural · ${favorites.length} medya favorisi` }));
+    container.append(el("p", { class: "cc-muted", text: `${historyCatalog.length.toLocaleString("tr-TR")} sohbet başlığı · ${indexStats.chats.toLocaleString("tr-TR")} dizinlenmiş sohbet · ${indexStats.messages.toLocaleString("tr-TR")} yerel ileti · ${folders.length} klasör · ${tags.length} etiket · ${metaCount} yerel sohbet kaydı · ${prompts.length} özel istem (${promptFavorites.length} favori) · ${bookmarks.length} yer imi · ${rules.length} akıllı kural · ${favorites.length} medya favorisi · ${hiddenMedia.length} gizli medya` }));
 
     container.append(el("h3", { text: "Arayüz ve araçlar" }));
     const currentSettings = await CC.repository.getSettings();
@@ -56,6 +57,32 @@
       checkbox.addEventListener("change", () => persistSetting(key, checkbox.checked));
       container.append(el("label", { class: "cc-checkline" }, [checkbox, document.createTextNode(` ${label}`)]));
     }
+    container.append(el("h3", { text: "Akıllı etiketler" }), el("p", { class: "cc-muted", text: "Sohbet başlıkları ve yerel olarak dizine alınmış metin üzerinden konu etiketi önerir. Değişiklikler sonraki taramada uygulanır." }));
+    const categoryOptions = [["coding", "Kodlama"], ["writing", "Yazı"], ["research", "Araştırma"], ["science", "Matematik ve bilim"], ["business", "İş"]];
+    currentSettings.smartCategories ||= {};
+    for (const [key, label] of categoryOptions) {
+      const checkbox = el("input", { type: "checkbox", checked: currentSettings.smartCategories[key] !== false });
+      checkbox.addEventListener("change", () => persistSetting("smartCategories", { ...currentSettings.smartCategories, [key]: checkbox.checked }));
+      container.append(el("label", { class: "cc-checkline" }, [checkbox, document.createTextNode(` ${label} etiketini otomatik uygula`)]));
+    }
+    addSelect("Etiket için gereken farklı eşleşme sayısı", "smartTagThreshold", [[1, "1 · daha duyarlı"], [2, "2 · dengeli"], [3, "3 · daha seçici"], [4, "4 · çok seçici"]]);
+    container.append(el("h3", { text: "Özelleştirilebilir hızlı araçlar" }), el("p", { class: "cc-muted", text: "＋ düğmesinde görünen beş kısayolu seçin. Aynı aracı iki slota koyamazsınız." }));
+    const quickCatalog = [["search", "Tüm sohbetlerde ara"], ["searchCurrent", "Açık sohbette ara"], ["manage", "Sohbetler"], ["organize", "Klasörler"], ["prompts", "İstemler"], ["bookmarks", "Yer imleri"], ["labels", "Mesaj etiketleri"], ["media", "Medya galerisi"], ["insights", "Kullanım özeti"], ["export", "Dışa aktar"]];
+    const slots = [...(currentSettings.quickActionSlots || CC.models.defaultSettings.quickActionSlots)];
+    for (let index = 0; index < 5; index++) {
+      const select = el("select", { class: "cc-select", "aria-label": `${index + 1}. hızlı araç` });
+      for (const [value, label] of quickCatalog) select.append(el("option", { value, text: `${index + 1}. ${label}`, selected: slots[index] === value }));
+      select.addEventListener("change", async () => {
+        const previous = slots[index];
+        const duplicate = slots.indexOf(select.value);
+        slots[index] = select.value;
+        if (duplicate >= 0 && duplicate !== index) slots[duplicate] = previous;
+        currentSettings.quickActionSlots = [...slots];
+        await persistSetting("quickActionSlots", [...slots]);
+        await CC.ui.render("settings");
+      });
+      container.append(select);
+    }
     addSelect("Uyarı sesi", "soundPattern", [["soft", "Yumuşak"], ["chime", "Çift zil"], ["bell", "Üç ton"]]);
     const volume = el("input", { class: "cc-input cc-range", type: "range", min: "5", max: "100", value: String(currentSettings.soundVolume ?? 35), "aria-label": "Uyarı ses düzeyi" });
     const volumeLabel = el("label", { class: "cc-field-label", text: `Uyarı ses düzeyi · ${volume.value}%` });
@@ -65,12 +92,54 @@
     container.append(el("button", { class: "cc-button cc-small", text: "Uyarı sesini dene", onclick: () => CC.pageTools?.previewSound?.() }));
     container.append(el("p", { class: "cc-muted", text: "Bağlam göstergesi yaklaşık karakter/token hesabıdır. Seçtiğiniz hedef modele ait gerçek token sınırını veya ChatGPT hesabınızın kalan kotasını göstermez." }));
 
-    const backupButton = el("button", { class: "cc-button cc-primary", text: "Yerel bilgileri JSON olarak yedekle" });
+    const backupButton = el("button", { class: "cc-button cc-primary", text: "Düzenleme bilgilerini JSON olarak yedekle" });
     backupButton.addEventListener("click", async () => {
       await CC.backup.export();
       CC.ui.toast("Yedek dosyası indirildi.");
     });
     container.append(backupButton);
+
+    container.append(el("h3", { text: "Şifreli tam yedek" }));
+    container.append(el("p", { class: "cc-muted", text: "Dizine eklediğiniz sohbet iletileri ve eklenti düzenlemeleri bu cihazda sıkıştırılıp AES-GCM ile şifrelenir. Parola en az 12 karakter olmalı; unutulursa yedek açılamaz. Dosya boyutu en fazla 60 MB, açılmış içerik en fazla 100 MB olabilir." }));
+    const fullBackup = el("button", { class: "cc-button cc-primary", text: "Şifreli tam yedek oluştur" });
+    fullBackup.addEventListener("click", async () => {
+      fullBackup.disabled = true; fullBackup.textContent = "Şifreli yedek hazırlanıyor…";
+      try {
+        const result = await CC.backup.exportFull();
+        if (result) CC.ui.toast(`${result.messages.toLocaleString("tr-TR")} dizinlenmiş ileti ve ${result.chats.toLocaleString("tr-TR")} sohbet için şifreli yedek indirildi.`);
+      } catch (error) { CC.ui.toast(error.message || "Şifreli yedek oluşturulamadı.", "error"); }
+      finally { fullBackup.disabled = false; fullBackup.textContent = "Şifreli tam yedek oluştur"; }
+    });
+    const fullFile = el("input", { class: "cc-input", type: "file", accept: ".ccbackup,application/octet-stream", "aria-label": "Şifreli tam yedek dosyası seçin" });
+    const fullPreview = el("div", { class: "cc-card", hidden: true });
+    container.append(fullBackup, fullFile, fullPreview);
+    fullFile.addEventListener("change", async () => {
+      fullPreview.replaceChildren(); fullPreview.hidden = true;
+      const file = fullFile.files?.[0];
+      if (!file) return;
+      try {
+        const password = await CC.ui.password("Şifreli yedeği aç", "Parola yalnızca bu sekmede kullanılır ve eklentide saklanmaz.");
+        if (password === null) return;
+        const record = await CC.backup.decodeFull(file, password);
+        fullPreview.hidden = false;
+        fullPreview.append(el("strong", { text: "Tam yedek içeriği" }), el("p", { class: "cc-item-meta", text: `${record.messages.length.toLocaleString("tr-TR")} ileti · ${record.indexedChats.length.toLocaleString("tr-TR")} sohbet dizini · ${(record.metadata.historyCatalog || []).length.toLocaleString("tr-TR")} sohbet başlığı` }));
+        const merge = el("button", { class: "cc-button cc-primary", text: "Mevcut verilerle birleştir" });
+        const replace = el("button", { class: "cc-button cc-danger", text: "Yerel verileri bu yedekle değiştir" });
+        const row = el("div", { class: "cc-row wrap" }, [merge, replace]); fullPreview.append(row);
+        const restoreFull = async (isMerge) => {
+          const verb = isMerge ? "mevcut yerel verilerle birleştirilsin" : "bu cihazdaki yerel arama dizini ve düzenleme bilgileri değiştirilsin";
+          if (!(await CC.ui.confirm("Şifreli tam yedeği geri yükle", `${record.messages.length.toLocaleString("tr-TR")} ileti ${verb} mi? ChatGPT hesabınızdaki sohbetler değişmez.`, { confirmText: isMerge ? "Birleştir" : "Yerel verileri değiştir", danger: !isMerge }))) return;
+          try {
+            const counts = await CC.backup.restoreFull(record, isMerge);
+            CC.ui.toast(`Geri yüklendi: ${counts.indexedMessages.toLocaleString("tr-TR")} ileti, ${counts.indexedChats.toLocaleString("tr-TR")} sohbet dizini.`);
+            await CC.ui.render("settings");
+          } catch (error) { CC.ui.toast(error.message || "Şifreli tam yedek geri yüklenemedi.", "error"); }
+        };
+        merge.addEventListener("click", () => restoreFull(true));
+        replace.addEventListener("click", () => restoreFull(false));
+      } catch (error) { CC.ui.toast(error.message || "Şifreli yedek okunamadı.", "error"); }
+      finally { fullFile.value = ""; }
+    });
 
     container.append(el("h3", { text: "Yedekten geri yükle" }));
     container.append(el("p", { class: "cc-muted", text: "Birleştir mevcut bilgilerinizin yanına yedekteki kayıtları ekler. Değiştir, eklentideki yerel bilgileri yedektekilerle değiştirir." }));
