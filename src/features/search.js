@@ -33,8 +33,8 @@
     return [...byName.values()];
   }
 
-  async function indexChat(chat, tags, rules) {
-    const record = await CC.adapter.fetchConversationForIndex(chat.id);
+  async function indexChat(chat, tags, rules, providedRecord = null) {
+    const record = providedRecord || await CC.adapter.fetchConversationForIndex(chat.id);
     const messages = record.messages.map((message) => ({ ...message, title: record.title || chat.title }));
     for (let offset = 0; offset < messages.length; offset += 400) await CC.messageIndex.save(messages.slice(offset, offset + 400));
     const searchable = `${record.title || chat.title} ${messages.map((message) => message.text).join(" ")}`;
@@ -58,6 +58,11 @@
   CC.indexer = {
     get running() { return !stopIndexing; },
     stop() { stopIndexing = true; },
+    async indexConversation(chat, record = null) {
+      const tags = await ensureBuiltInTags();
+      const rules = await CC.repository.getTagRules();
+      return indexChat(chat, tags, rules, record);
+    },
     async run(onProgress) {
       if (this.active) return;
       this.active = true; stopIndexing = false;
@@ -109,8 +114,9 @@
     const progress = el("div", { class: "cc-progress", hidden: true }, [el("i", { style: "width:0%" })]);
     const progressText = el("span", { class: "cc-muted", text: "" });
     const indexButton = el("button", { class: "cc-button cc-primary", text: "Tüm sohbetleri tara" });
+    const indexCurrentButton = el("button", { class: "cc-button", text: "Açık sohbeti tara", disabled: !CC.adapter.getCurrentConversationId(), title: "Yalnızca şu an açık olan sohbetin mesajlarını yerel arama dizinine ekler." });
     const clearButton = el("button", { class: "cc-button cc-quiet", text: "Dizini temizle", disabled: !stats.messages });
-    const indexActions = el("div", { class: "cc-row wrap" }); indexActions.append(indexButton, clearButton);
+    const indexActions = el("div", { class: "cc-row wrap" }); indexActions.append(indexButton, indexCurrentButton, clearButton);
     status.append(el("div", { class: "cc-index-status-copy" }, [statusMain, statusSub]), progress, progressText, indexActions);
     const privacyNotice = el("aside", { class: "cc-privacy-notice", "aria-label": CC.tr("privacy", "Privacy & local data") }, [
       el("strong", { text: CC.tr("indexPrivacyTitle", "Full-text scans save private content on this device") }),
@@ -120,13 +126,15 @@
     const query = el("input", { class: "cc-input cc-search-main", type: "search", placeholder: "Bir kelime, cümle veya yanıt ara…", "aria-label": "Sohbet içeriklerinde ara" });
     const runButton = el("button", { class: "cc-button cc-primary", text: "Ara" });
     const searchForm = el("div", { class: "cc-search-form" }); searchForm.append(query, runButton); container.append(searchForm);
+    if (currentOnly.checked) setTimeout(() => query.focus(), 0);
     const advancedToggle = el("button", { class: "cc-text-button", text: "Gelişmiş filtreler +" });
     const advanced = el("div", { class: "cc-filter-panel", hidden: true });
     const role = el("select", { class: "cc-select", "aria-label": "Konuşmacı" });
     role.append(el("option", { value: "all", text: "Tüm konuşmacılar" }), el("option", { value: "user", text: "Benim mesajlarım" }), el("option", { value: "assistant", text: "ChatGPT yanıtları" }));
     const from = el("input", { class: "cc-input", type: "date", "aria-label": "Başlangıç tarihi" });
     const to = el("input", { class: "cc-input", type: "date", "aria-label": "Bitiş tarihi" });
-    const exact = el("input", { type: "checkbox" }), titleOnly = el("input", { type: "checkbox" }), currentOnly = el("input", { type: "checkbox" });
+    const exact = el("input", { type: "checkbox" }), titleOnly = el("input", { type: "checkbox" }), currentOnly = el("input", { type: "checkbox", checked: Boolean(CC.state.searchCurrentOnly && CC.adapter.getCurrentConversationId()) });
+    CC.state.searchCurrentOnly = false;
     const include = el("input", { class: "cc-input", placeholder: "Zorunlu sözcükler; virgülle ayırın" });
     const exclude = el("input", { class: "cc-input", placeholder: "Hariç tutulan sözcükler; virgülle ayırın" });
     const includeMode = el("select", { class: "cc-select", "aria-label": "Zorunlu sözcük eşleşmesi" });
@@ -141,6 +149,7 @@
       el("div", { class: "cc-filter-grid" }, [include, includeMode, exclude, excludeMode])
     );
     container.append(advancedToggle, advanced);
+    if (currentOnly.checked) container.append(el("p", { class: "cc-note", text: "Bu arama yalnızca şu anda açık olan sohbeti kapsar. İlk aramada Companion mesajları bu cihazda yerel olarak dizine ekler." }));
     advancedToggle.addEventListener("click", () => { advanced.hidden = !advanced.hidden; advancedToggle.textContent = advanced.hidden ? "Gelişmiş filtreler +" : "Gelişmiş filtreler −"; });
     const history = el("div", { class: "cc-recent-searches" });
     const recent = await CC.repository.getSearchHistory();
@@ -180,6 +189,18 @@
       try {
         const options = getOptions();
         if (currentOnly.checked && !options.conversationId) throw new Error("Açık sohbette aramak için önce bir ChatGPT sohbeti açın.");
+        if (currentOnly.checked) {
+          const indexed = await CC.messageIndex.chats();
+          if (!indexed.some((chat) => chat.id === options.conversationId)) {
+            progress.hidden = false; progressText.textContent = "Açık sohbet ilk kez yerel dizine ekleniyor…";
+            const record = await CC.adapter.fetchConversationForIndex(options.conversationId);
+            await CC.indexer.indexConversation({ id: options.conversationId, title: record.title, url: `/c/${encodeURIComponent(options.conversationId)}`, archived: false }, record);
+            await CC.repository.saveHistoryCatalog([{ id: options.conversationId, title: record.title, url: `/c/${encodeURIComponent(options.conversationId)}`, updatedAt: new Date().toISOString() }]);
+            const latest = await CC.messageIndex.stats();
+            statusMain.textContent = `${latest.chats} sohbet dizinde`; statusSub.textContent = `${latest.messages.toLocaleString("tr-TR")} ileti bu cihazda aranabilir.`;
+            clearButton.disabled = !latest.messages;
+          }
+        }
         const results = await CC.messageIndex.search(options);
         await CC.repository.saveSearchTerm(options.query);
         resultList.replaceChildren();
@@ -207,6 +228,23 @@
     archiveSelected.addEventListener("click", () => CC.organization.manageSelectedChats([...selection], "archive"));
     deleteSelected.addEventListener("click", () => CC.organization.manageSelectedChats([...selection], "delete"));
     if (!stats.messages) resultList.append(el("p", { class: "cc-empty", text: "Önce sohbetlerini bu cihazda tara. Dizin konuşma metinlerini yerelde tutar ve istediğinde temizlenebilir." }));
+
+    indexCurrentButton.addEventListener("click", async () => {
+      const id = CC.adapter.getCurrentConversationId();
+      if (!id) return CC.ui.toast("Önce aramak istediğiniz sohbeti açın.", "error");
+      indexCurrentButton.disabled = true; indexCurrentButton.textContent = "Açık sohbet taranıyor…";
+      progress.hidden = false; progressText.textContent = "Yalnızca açık sohbet yerel dizine ekleniyor…";
+      try {
+        const record = await CC.adapter.fetchConversationForIndex(id);
+        await CC.indexer.indexConversation({ id, title: record.title, url: `/c/${encodeURIComponent(id)}`, archived: false }, record);
+        await CC.repository.saveHistoryCatalog([{ id, title: record.title, url: `/c/${encodeURIComponent(id)}`, updatedAt: new Date().toISOString() }]);
+        const latest = await CC.messageIndex.stats();
+        statusMain.textContent = `${latest.chats} sohbet dizinde`; statusSub.textContent = `${latest.messages.toLocaleString("tr-TR")} ileti bu cihazda aranabilir.`;
+        clearButton.disabled = !latest.messages; progressText.textContent = `Açık sohbet eklendi · ${record.messages.length} ileti dizine alındı.`;
+        CC.ui.toast("Açık sohbet yerel arama dizinine eklendi.");
+      } catch (error) { progressText.textContent = error.message || "Açık sohbet taranamadı."; CC.ui.toast(progressText.textContent, "error"); }
+      finally { indexCurrentButton.disabled = !CC.adapter.getCurrentConversationId(); indexCurrentButton.textContent = "Açık sohbeti tara"; }
+    });
 
     indexButton.addEventListener("click", async () => {
       if (CC.indexer.active) { CC.indexer.stop(); indexButton.disabled = true; indexButton.textContent = "Durduruluyor…"; return; }

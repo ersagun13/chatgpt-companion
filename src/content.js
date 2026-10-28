@@ -48,6 +48,7 @@
       CC.state.locale = settings.locale === "en" ? "en" : "tr";
       CC.ui.setTheme(settings.theme || "midnight");
       CC.ui.mount();
+      CC.ui.applyPreferences(settings);
       CC.pageTools.init();
       await resumePendingJob();
       focusPendingSearchTarget().catch(() => {});

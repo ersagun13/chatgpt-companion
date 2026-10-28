@@ -14,7 +14,7 @@ ChatGPT Companion is a local Chrome extension. It does not use a Companion-opera
 
 ## Network requests
 
-- To collect the history catalog, read a conversation, or archive, restore, or delete a chat, the extension requests data from `chatgpt.com` using the browser's current signed-in session. It does not store your session token in Companion storage.
+- To collect the history catalog, read a conversation, rename it, or archive, restore, or delete a chat, the extension requests data from `chatgpt.com` using the browser's current signed-in session. It does not store your session token in Companion storage.
 - When you open the media gallery or choose to download audio or images, the browser requests the original media URLs found in ChatGPT messages. Cross-origin image previews and downloads omit credentials and referrer information; the destination host can still receive the request and your network address.
 - The extension does not send chat content to its maintainers, GitHub, or a separate Companion backend. GitHub is used only when you visit the public source/release pages yourself.
 
@@ -39,7 +39,7 @@ ChatGPT Companion yerel çalışan bir Chrome eklentisidir. Companion tarafında
 - Sohbet başlıkları, kimlikleri, tarihleri ve klasör/etiket bilgileri Chrome'un yerel eklenti depolamasında tutulur.
 - **Tüm sohbetleri tara** işlemini başlatırsanız, sohbet mesajları ve arama kayıtları mevcut Chrome profilindeki IndexedDB alanına kaydedilir. Bu içerik hassas kişisel veya iş verileri içerebilir.
 - Companion bu yerel kayıtları uygulama düzeyinde şifrelemez. Windows hesabınıza veya Chrome profilinize erişebilen kişiler ya da işlemler bu verileri okuyabilir. Paylaşılan veya güvenilmeyen cihazda hassas sohbetleri dizine almayın.
-- Sohbet kataloğunu okumak, sohbet içeriğine erişmek ve arşivleme, arşivden çıkarma veya silme işlemleri için istekler mevcut oturumunuzla `chatgpt.com` adresine gönderilir. Oturum belirteci Companion depolamasına yazılmaz.
+- Sohbet kataloğunu okumak, sohbet içeriğine erişmek, sohbet adını değiştirmek ve arşivleme, arşivden çıkarma veya silme işlemleri için istekler mevcut oturumunuzla `chatgpt.com` adresine gönderilir. Oturum belirteci Companion depolamasına yazılmaz.
 - Medya galerisini açtığınızda veya ses/görsel indirmeyi seçtiğinizde tarayıcı ChatGPT mesajlarındaki özgün medya adreslerine istek gönderir. Çapraz site görsel ve indirme isteklerinde kimlik bilgileri ve yönlendiren sayfa bilgisi gönderilmez; hedef sunucu isteği ve ağ adresinizi yine görebilir.
 - Eklenti sohbet içeriğini geliştiricilere, GitHub'a veya ayrı bir Companion sunucusuna göndermez.
 - JSON yedeği tam metin arama dizinini içermez. **Sohbet ara → Dizini temizle** veya **Ayarlar → Tüm eklenti verilerini temizle** seçenekleri Companion'ın yerel verilerini siler; ChatGPT sohbetlerini silmez.

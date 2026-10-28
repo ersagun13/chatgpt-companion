@@ -1,7 +1,7 @@
 globalThis.CC_LOCALES = globalThis.CC_LOCALES || {};
 globalThis.CC_LOCALES.en = {
   appName: "ChatGPT Companion", open: "Open", close: "Close", home: "Tools", search: "Search chats",
-  manage: "Manage chats", organize: "Folders & tags", prompts: "Prompts", bookmarks: "Bookmarks",
+  manage: "Manage chats", organize: "Folders & tags", prompts: "Prompts", bookmarks: "Bookmarks", labels: "Message labels",
   media: "Images", insights: "Usage", appearance: "Appearance", settings: "Settings", loading: "Loading…",
   unsupported: "This feature is not available on the current ChatGPT page.", localOnly: "Your data stays on this device.",
   startIndex: "Index chats", stopIndex: "Stop", clearIndex: "Clear local index", searchPlaceholder: "Search chats…",

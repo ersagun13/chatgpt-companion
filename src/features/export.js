@@ -16,8 +16,24 @@
     const date = record.updatedAt || [...(record.messages || [])].reverse().find((message) => message.timestamp)?.timestamp || "";
     return `---\ntitle: ${yaml(record.title)}\ndate: ${yaml(date)}\nmodel: ${yaml(record.model)}\nurl: ${yaml(conversationUrl)}\nsource: ChatGPT\n---\n\n# ${record.title}\n\n${record.messages.map((message) => `## ${roleName(message.role)}${message.timestamp ? ` · ${message.timestamp}` : ""}\n\n${message.text || (message.images?.length || message.links?.length ? "[Görsel veya ek bağlantısı aşağıda]" : "")}${(message.images || []).map((url) => `\n\n[Medya bağlantısı](${url})`).join("")}${(message.links || []).map((item) => `\n\n[${item.text || item.url}](${item.url})`).join("")}`).join("\n\n---\n\n")}`;
   }
+  function toCsv(record) {
+    const cell = (value) => {
+      let text = String(value ?? "");
+      if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const rows = [["conversation_title", "conversation_id", "role", "timestamp", "message", "media_urls", "links"]];
+    for (const message of record.messages || []) rows.push([
+      record.title, record.id, roleName(message.role), message.timestamp || "", message.text || "",
+      (message.images || []).join(" | "), (message.links || []).map((item) => item.url).filter(Boolean).join(" | ")
+    ]);
+    return `\ufeff${rows.map((row) => row.map(cell).join(",")).join("\r\n")}`;
+  }
+  function extensionFor(format) { return format === "json" ? "json" : format === "csv" ? "csv" : format === "markdown" || format === "md" ? "md" : "txt"; }
+  function mimeFor(format) { return format === "json" ? "application/json;charset=utf-8" : format === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8"; }
   function contentFor(record, format) {
     if (format === "json") return JSON.stringify(record, null, 2);
+    if (format === "csv") return toCsv(record);
     if (format === "markdown" || format === "md") return toMarkdown(record);
     return toText(record);
   }
@@ -63,15 +79,14 @@
 
   async function exportConversation(record, format = "text") {
     if (!record?.messages) return { ok: false, reason: "Sohbet içeriği okunamadı." };
-    const extension = format === "json" ? "json" : format === "markdown" || format === "md" ? "md" : "txt";
-    return download(new Blob([contentFor(record, format)], { type: format === "json" ? "application/json;charset=utf-8" : "text/plain;charset=utf-8" }), `${safeName(record.title)}.${extension}`);
+    return download(new Blob([contentFor(record, format)], { type: mimeFor(format) }), `${safeName(record.title)}.${extensionFor(format)}`);
   }
 
   async function exportCurrent(format = "markdown") {
     const record = await CC.adapter.readCurrentConversation();
     if (!record) return { ok: false, reason: "Açık sohbette dışa aktarılacak içerik bulunamadı." };
-    const extension = format === "json" ? "json" : format === "markdown" || format === "md" ? "md" : "txt";
-    const blob = new Blob([contentFor(record, format)], { type: format === "json" ? "application/json;charset=utf-8" : "text/plain;charset=utf-8" });
+    const extension = extensionFor(format);
+    const blob = new Blob([contentFor(record, format)], { type: mimeFor(format) });
     CC.state.pendingDownload = { blob, filename: `${safeName(record.title)}.${extension}`, initialUrl: `${location.pathname}${location.search}${location.hash}` };
     CC.ui.open("export");
     CC.ui.toast("Dosya hazır. Kaydetmek için İndir düğmesine tıklayın.");
@@ -96,17 +111,17 @@
     const records = job.ids.map((id) => byId.get(id)).filter(Boolean);
     if (!records.length) throw new Error("Seçilen sohbetlerden okunabilir içerik alınamadı.");
     let result;
-    if (["text", "markdown", "json"].includes(job.format)) {
+    if (["text", "markdown", "json", "csv"].includes(job.format)) {
       if (records.length !== 1) throw new Error("Tekil dışa aktarma biçimi için tek sohbet seçin; çoklu seçim ZIP olarak kaydedilir.");
-      const extension = job.format === "json" ? "json" : job.format === "markdown" ? "md" : "txt";
+      const extension = extensionFor(job.format);
       result = {
         ok: true,
         filename: `${safeName(records[0].title)}.${extension}`,
-        blob: new Blob([contentFor(records[0], job.format)], { type: job.format === "json" ? "application/json;charset=utf-8" : "text/plain;charset=utf-8" })
+        blob: new Blob([contentFor(records[0], job.format)], { type: mimeFor(job.format) })
       };
     } else {
       const format = job.format === "zip" ? "markdown" : job.format.replace(/^zip-/, "");
-      const extension = format === "json" ? "json" : format === "text" ? "txt" : "md";
+      const extension = extensionFor(format);
       const files = records.map((record, index) => ({ name: `${String(index + 1).padStart(3, "0")}-${safeName(record.title)}.${extension}`, data: contentFor(record, format) }));
       result = { ok: true, blob: zipStore(files), filename: `chatgpt-sohbetleri-${new Date().toISOString().slice(0, 10)}.zip` };
     }
@@ -183,7 +198,7 @@
   CC.exporter = { exportConversation, exportCurrent, exportSelection, continueExportJob, cancelExport, downloadPending, contentFor, downloadZipFiles };
   CC.features.register({ id: "export", titleKey: "export", async render(container) {
     container.append(el("h2", { text: "Dışa aktar" }));
-    container.append(el("p", { class: "cc-note", text: "Bir format seçtiğinizde açık sohbetin görünür iletileri okunur. Seçilen sohbetleri ZIP olarak dışa aktarmak için Sohbetleri yönet bölümünü kullanın." }));
+    container.append(el("p", { class: "cc-note", text: "TXT, Markdown, JSON veya elektronik tablo için CSV olarak dışa aktarın. Seçilen sohbetleri ZIP olarak kaydetmek için Sohbetleri yönet bölümünü kullanın." }));
     if (CC.state.pendingDownload) {
       const ready = el("div", { class: "cc-card" });
       ready.append(el("strong", { text: "Dosya hazır" }), el("p", { class: "cc-item-meta", text: CC.state.pendingDownload.filename }));
@@ -194,7 +209,7 @@
     if (!title) { container.append(el("p", { class: "cc-muted", text: "Önce dışa aktarmak istediğiniz sohbeti ChatGPT’de açın." })); return; }
     container.append(el("h3", { text: title }));
     const buttons = el("div", { class: "cc-row wrap" });
-    for (const [format, label] of [["text", "TXT"], ["markdown", "Markdown"], ["json", "JSON"]]) {
+    for (const [format, label] of [["text", "TXT"], ["markdown", "Markdown"], ["json", "JSON"], ["csv", "CSV"]]) {
       buttons.append(el("button", { class: "cc-button cc-primary", text: label, onclick: async () => {
         const result = await exportCurrent(format);
         if (!result.ok) CC.ui.toast(result.reason, "error");

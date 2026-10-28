@@ -1,9 +1,10 @@
 (function registerToolbox() {
   const CC = globalThis.ChatCompanion;
   if (!CC) return;
-  const nav = ["home", "search", "manage", "organize", "prompts", "bookmarks", "media", "insights", "export", "settings"];
-  const names = { home: "home", search: "search", manage: "manage", organize: "organize", prompts: "prompts", bookmarks: "bookmarks", media: "media", insights: "insights", export: "export", settings: "settings" };
-  const icons = { home: "⌂", search: "⌕", manage: "▤", organize: "▦", prompts: "✦", bookmarks: "☆", media: "▧", insights: "◷", export: "⇧", settings: "⚙" };
+  const nav = ["home", "search", "manage", "organize", "prompts", "bookmarks", "labels", "media", "insights", "export", "settings"];
+  const names = { home: "home", search: "search", manage: "manage", organize: "organize", prompts: "prompts", bookmarks: "bookmarks", labels: "Mesaj etiketleri", media: "media", insights: "insights", export: "export", settings: "settings" };
+  const icons = { home: "⌂", search: "⌕", manage: "▤", organize: "▦", prompts: "✦", bookmarks: "☆", labels: "◉", media: "▧", insights: "◷", export: "⇧", settings: "⚙" };
+  const quickItems = [["search", "Tüm sohbetlerde ara", "⌕"], ["searchCurrent", "Açık sohbette ara", "⌕"], ["manage", "Sohbetler", "▤"], ["organize", "Klasörler", "▦"], ["prompts", "İstemler", "✦"], ["bookmarks", "Yer imleri", "☆"], ["labels", "Mesaj etiketleri", "◉"]];
 
   function ensure() {
     if (CC.state.host?.isConnected) return;
@@ -17,6 +18,22 @@
     shadow.append(css);
     const layer = CC.make("div", { class: "cc-root" });
     const button = CC.make("button", { class: "cc-fab", type: "button", text: "CC", "aria-label": "Open ChatGPT Companion", title: "ChatGPT Companion", onclick: () => CC.ui.toggle() });
+    const launcher = CC.make("div", { class: "cc-launcher" });
+    const quickButton = CC.make("button", { class: "cc-quick-button", type: "button", text: "＋", "aria-label": "Hızlı araçları aç", title: "Hızlı araçlar", "aria-expanded": "false" });
+    const quickMenu = CC.make("div", { class: "cc-quick-menu", role: "menu", "aria-label": "Hızlı araçlar", hidden: true });
+    for (const [view, title, icon] of quickItems) {
+      quickMenu.append(CC.make("button", { class: "cc-quick-item", type: "button", role: "menuitem", onclick: () => {
+        quickMenu.hidden = true; quickButton.setAttribute("aria-expanded", "false");
+        if (view === "searchCurrent") CC.state.searchCurrentOnly = true;
+        CC.ui.open(view === "searchCurrent" ? "search" : view);
+      } }, [CC.make("span", { text: icon, "aria-hidden": "true" }), CC.make("span", { text: title })]));
+    }
+    quickButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      quickMenu.hidden = !quickMenu.hidden;
+      quickButton.setAttribute("aria-expanded", String(!quickMenu.hidden));
+    });
+    launcher.append(quickMenu, quickButton, button);
     const panel = CC.make("section", { class: "cc-panel", "aria-label": "ChatGPT Companion", hidden: true });
     const head = CC.make("header", { class: "cc-head" });
     const brand = CC.make("div", { class: "cc-brand" }, [CC.make("span", { class: "cc-brand-mark", text: "CC" }), CC.make("strong", { text: "ChatGPT Companion" })]);
@@ -37,7 +54,7 @@
     const content = CC.make("main", { class: "cc-content", tabindex: "-1" });
     const body = CC.make("div", { class: "cc-workspace" }, [navNode, content]);
     panel.append(head, body);
-    layer.append(button, panel);
+    layer.append(launcher, panel);
     shadow.append(layer);
     CC.state.host = host;
     CC.state.shadow = shadow;
@@ -45,6 +62,9 @@
     CC.state.panel = panel;
     CC.state.content = content;
     CC.state.fab = button;
+    CC.state.quickButton = quickButton;
+    CC.state.quickMenu = quickMenu;
+    CC.state.launcher = launcher;
     CC.state.nav = navNode;
     CC.state.folderShortcuts = folderShortcuts;
     CC.state.body = body;
@@ -54,11 +74,18 @@
   }
 
   CC.ui.mount = ensure;
-  CC.ui.toggle = () => { ensure(); CC.state.panel.hidden = !CC.state.panel.hidden; if (!CC.state.panel.hidden) CC.ui.render(CC.state.currentView); };
-  CC.ui.open = (view = "home") => { ensure(); CC.state.currentView = view; CC.state.panel.hidden = false; CC.ui.render(view); };
+  CC.ui.toggle = () => { ensure(); CC.state.quickMenu.hidden = true; CC.state.quickButton.setAttribute("aria-expanded", "false"); CC.state.panel.hidden = !CC.state.panel.hidden; if (!CC.state.panel.hidden) CC.ui.render(CC.state.currentView); };
+  CC.ui.open = (view = "home") => { ensure(); CC.state.quickMenu.hidden = true; CC.state.quickButton.setAttribute("aria-expanded", "false"); CC.state.currentView = view; CC.state.panel.hidden = false; CC.ui.render(view); };
   CC.ui.close = () => { if (CC.state.panel) CC.state.panel.hidden = true; };
   CC.ui.getContent = () => CC.state.content;
   CC.ui.setTheme = (theme) => { CC.state.theme = theme || "midnight"; if (CC.state.layer) CC.state.layer.dataset.theme = CC.state.theme; };
+  CC.ui.applyPreferences = (settings = {}) => {
+    if (!CC.state.layer) return;
+    CC.state.layer.dataset.panelSize = settings.panelSize || "medium";
+    CC.state.layer.dataset.textScale = settings.textScale || "normal";
+    CC.state.layer.dataset.density = settings.density || "comfortable";
+    CC.state.layer.dataset.accent = settings.accent || "violet";
+  };
   CC.ui.refreshFolderShortcuts = async () => {
     const shortcuts = CC.state.folderShortcuts;
     if (!shortcuts) return;
@@ -148,6 +175,13 @@
   document.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault(); CC.ui.openCommandPalette();
+    }
+    if (event.altKey && event.shiftKey && event.key.toLowerCase() === "f") {
+      event.preventDefault(); CC.state.searchCurrentOnly = true; CC.ui.open("search");
+    }
+    if (event.key === "Escape" && CC.state.quickMenu && !CC.state.quickMenu.hidden) {
+      CC.state.quickMenu.hidden = true;
+      CC.state.quickButton?.setAttribute("aria-expanded", "false");
     }
   }, true);
 

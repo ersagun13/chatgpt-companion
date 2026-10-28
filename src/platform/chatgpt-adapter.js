@@ -166,6 +166,36 @@
     }
     return { ok: false, reason: "ChatGPT işlemi tamamlanamadı." };
   }
+  async function requestConversationRename(id, title) {
+    if (!/^[A-Za-z0-9_-]{6,}$/.test(id || "")) return { ok: false, reason: "Sohbet kimliği geçersiz." };
+    const nextTitle = clean(title).slice(0, 240);
+    if (!nextTitle) return { ok: false, reason: "Sohbet adı boş olamaz." };
+    const endpoint = new URL(`/backend-api/conversation/${encodeURIComponent(id)}`, location.origin);
+    let accessToken = await readAccountAccessToken();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20000);
+      try {
+        const headers = { Accept: "application/json", "Content-Type": "application/json", "X-Extension-Request": "1" };
+        if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+        const response = await fetch(endpoint.href, {
+          method: "PATCH", credentials: "include", cache: "no-store", headers,
+          body: JSON.stringify({ title: nextTitle }), signal: controller.signal
+        });
+        if (response.ok) return { ok: true, title: nextTitle };
+        if (response.status === 401 && attempt === 0) { accessToken = await readAccountAccessToken(); continue; }
+        if (response.status === 429 || response.status >= 500) {
+          if (attempt < 2) { await CC.sleep([800, 1800][attempt]); continue; }
+        }
+        return { ok: false, reason: `ChatGPT sohbet adını değiştiremedi (${response.status}).` };
+      } catch (error) {
+        if (attempt === 2) return { ok: false, reason: error?.name === "AbortError" ? "ChatGPT yanıt vermedi; sohbet adı değiştirilmedi." : "ChatGPT’ye bağlanılamadı; sohbet adı değiştirilmedi." };
+        await CC.sleep([700, 1500][attempt]);
+      } finally { clearTimeout(timeout); }
+    }
+    accessToken = null;
+    return { ok: false, reason: "ChatGPT sohbet adı değiştirilemedi." };
+  }
   function collectText(value, output = []) {
     if (typeof value === "string") { output.push(value); return output; }
     if (Array.isArray(value)) { for (const item of value) collectText(item, output); return output; }
@@ -552,6 +582,7 @@
       if (!supportedActions.has(action)) return { ok: false, reason: "Bilinmeyen sohbet işlemi." };
       return requestChatAction(id, action);
     },
+    async renameConversation(id, title) { return requestConversationRename(id, title); },
     stopHistoryScan() { stopHistoryScanRequested = true; },
     async openArchiveManager() {
       if (archiveDialog()) return { ok: true };

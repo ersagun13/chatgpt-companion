@@ -16,10 +16,29 @@
 
     container.append(el("h3", { text: "Arayüz ve araçlar" }));
     const currentSettings = await CC.repository.getSettings();
+    const persistSetting = async (key, value) => {
+      currentSettings[key] = value;
+      await CC.repository.saveSettings(currentSettings);
+      CC.ui.setTheme(currentSettings.theme);
+      CC.ui.applyPreferences(currentSettings);
+      document.dispatchEvent(new CustomEvent("cc:settings-changed", { detail: { ...currentSettings } }));
+    };
+    function addSelect(label, key, options) {
+      const select = el("select", { class: "cc-select", "aria-label": label });
+      for (const [value, text] of options) select.append(el("option", { value, text, selected: String(currentSettings[key]) === String(value) }));
+      select.addEventListener("change", () => persistSetting(key, select.value));
+      container.append(el("label", { class: "cc-field-label", text: label }), select);
+      return select;
+    }
     const theme = el("select", { class: "cc-select", "aria-label": "Renk teması" });
     for (const [value, label] of [["midnight", "Gece moru"], ["paper", "Açık"], ["ocean", "Okyanus"]]) theme.append(el("option", { value, text: label, selected: currentSettings.theme === value }));
-    theme.addEventListener("change", async () => { await CC.repository.saveSettings({ ...currentSettings, theme: theme.value }); CC.ui.setTheme(theme.value); document.dispatchEvent(new CustomEvent("cc:settings-changed", { detail: currentSettings })); });
-    container.append(theme);
+    theme.addEventListener("change", () => persistSetting("theme", theme.value));
+    container.append(el("label", { class: "cc-field-label", text: "Renk teması" }), theme);
+    addSelect("Vurgu rengi", "accent", [["violet", "Menekşe"], ["blue", "Mavi"], ["mint", "Nane"], ["amber", "Kehribar"]]);
+    addSelect("Panel genişliği", "panelSize", [["compact", "Dar"], ["medium", "Orta"], ["wide", "Geniş"]]);
+    addSelect("Yazı boyutu", "textScale", [["small", "Küçük"], ["normal", "Normal"], ["large", "Büyük"]]);
+    addSelect("Liste yoğunluğu", "density", [["comfortable", "Rahat"], ["compact", "Sıkı"]]);
+    addSelect("Bağlam ölçer hedefi (yaklaşık)", "contextTarget", [[32000, "32 bin token"], [64000, "64 bin token"], [128000, "128 bin token"], [256000, "256 bin token"]]);
     if (typeof speechSynthesis !== "undefined") {
       const voiceSelect = el("select", { class: "cc-select", "aria-label": "Yanıtları seslendirme sesi" });
       function fillVoices() {
@@ -29,15 +48,22 @@
         voiceSelect.value = selected;
       }
       fillVoices(); speechSynthesis.addEventListener?.("voiceschanged", fillVoices);
-      voiceSelect.addEventListener("change", async () => { currentSettings.speechVoice = voiceSelect.value; await CC.repository.saveSettings(currentSettings); document.dispatchEvent(new CustomEvent("cc:settings-changed", { detail: currentSettings })); });
+      voiceSelect.addEventListener("change", () => persistSetting("speechVoice", voiceSelect.value));
       container.append(el("label", { class: "cc-field-label", text: "Yanıtları seslendirme sesi" }), voiceSelect);
     }
-    for (const [key, label] of [["contextEstimate", "Yaklaşık bağlam ölçer"], ["wordCounter", "Canlı sözcük ve karakter sayacı"], ["collapsibleMessages", "Uzun iletileri daraltma düğmesi"], ["soundAlert", "ChatGPT yanıtı bitince sesli uyarı"], ["nativeFolderShortcuts", "Klasör kısayollarını ChatGPT kenar çubuğunda göster"]]) {
+    for (const [key, label] of [["contextEstimate", "Yaklaşık bağlam ölçer"], ["wordCounter", "Sözcük, karakter, cümle ve okuma süresi sayacı"], ["collapsibleMessages", "Uzun iletileri daraltma düğmesi"], ["soundAlert", "ChatGPT yanıtı bitince sesli uyarı"], ["alertOnlyBackground", "Ses yalnızca sekme arka plandayken çalsın"], ["tabTitleAlert", "Arka plan sekmesinin başlığına uyarı işareti koy"], ["nativeFolderShortcuts", "Klasör kısayollarını ChatGPT kenar çubuğunda göster"]]) {
       const checkbox = el("input", { type: "checkbox", checked: currentSettings[key] !== false });
-      checkbox.addEventListener("change", async () => { currentSettings[key] = checkbox.checked; await CC.repository.saveSettings(currentSettings); document.dispatchEvent(new CustomEvent("cc:settings-changed", { detail: currentSettings })); });
+      checkbox.addEventListener("change", () => persistSetting(key, checkbox.checked));
       container.append(el("label", { class: "cc-checkline" }, [checkbox, document.createTextNode(` ${label}`)]));
     }
-    container.append(el("p", { class: "cc-muted", text: "Bağlam ölçeri yalnızca yaklaşık hesap yapar; ChatGPT'nin gerçek token kotasını veya kalan kullanım hakkını göstermez." }));
+    addSelect("Uyarı sesi", "soundPattern", [["soft", "Yumuşak"], ["chime", "Çift zil"], ["bell", "Üç ton"]]);
+    const volume = el("input", { class: "cc-input cc-range", type: "range", min: "5", max: "100", value: String(currentSettings.soundVolume ?? 35), "aria-label": "Uyarı ses düzeyi" });
+    const volumeLabel = el("label", { class: "cc-field-label", text: `Uyarı ses düzeyi · ${volume.value}%` });
+    volume.addEventListener("input", () => { volumeLabel.textContent = `Uyarı ses düzeyi · ${volume.value}%`; });
+    volume.addEventListener("change", () => persistSetting("soundVolume", Number(volume.value)));
+    container.append(volumeLabel, volume);
+    container.append(el("button", { class: "cc-button cc-small", text: "Uyarı sesini dene", onclick: () => CC.pageTools?.previewSound?.() }));
+    container.append(el("p", { class: "cc-muted", text: "Bağlam göstergesi yaklaşık karakter/token hesabıdır. Seçtiğiniz hedef modele ait gerçek token sınırını veya ChatGPT hesabınızın kalan kotasını göstermez." }));
 
     const backupButton = el("button", { class: "cc-button cc-primary", text: "Yerel bilgileri JSON olarak yedekle" });
     backupButton.addEventListener("click", async () => {

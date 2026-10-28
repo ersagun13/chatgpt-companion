@@ -72,7 +72,7 @@
     },
     async openContextPicker() {
       const catalog = await CC.repository.getHistoryCatalog();
-      const list = [...catalog].sort((a, b) => (Date.parse(b.updatedAt || "") || 0) - (Date.parse(a.updatedAt || "") || 0)).slice(0, 300);
+      const list = [...catalog].sort((a, b) => (Date.parse(b.updatedAt || "") || 0) - (Date.parse(a.updatedAt || "") || 0));
       const title = await CC.ui.prompt("Önceki sohbetten bağlam ekle", `İlk sohbetler:\n${list.slice(0, 7).map((chat) => chat.title).join("\n")}\n\nSohbet başlığını yazın.`);
       if (!title) return;
       const chat = list.find((item) => CC.normalize(item.title) === CC.normalize(title)) || list.find((item) => CC.normalize(item.title).includes(CC.normalize(title)));

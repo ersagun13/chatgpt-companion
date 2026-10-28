@@ -1,7 +1,7 @@
 (function definePageTools() {
   const CC = globalThis.ChatCompanion;
   if (!CC) return;
-  let observer, scanTimer, activeTimer, baseline = new Set(), initialized = false, suspendCountUntil = 0, toolSettings = {}, generationStateKnown = false, wasGenerating = false, nativeFolderRoot = null, lastInteractionAt = Date.now();
+  let observer, scanTimer, activeTimer, baseline = new Set(), initialized = false, suspendCountUntil = 0, toolSettings = {}, generationStateKnown = false, wasGenerating = false, nativeFolderRoot = null, lastInteractionAt = Date.now(), titleRestoreTimer = null;
   const today = () => new Date().toISOString().slice(0, 10);
 
   function messageNode(authorNode) { return authorNode.closest("[data-message-id]") || authorNode; }
@@ -25,16 +25,37 @@
       const AudioContextType = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextType) return;
       const context = new AudioContextType();
-      const oscillator = context.createOscillator();
-      const volume = context.createGain();
-      oscillator.type = "sine"; oscillator.frequency.setValueAtTime(740, context.currentTime);
-      volume.gain.setValueAtTime(0.0001, context.currentTime);
-      volume.gain.exponentialRampToValueAtTime(0.045, context.currentTime + 0.025);
-      volume.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.28);
-      oscillator.connect(volume); volume.connect(context.destination);
-      oscillator.start(); oscillator.stop(context.currentTime + 0.3);
-      setTimeout(() => context.close().catch(() => {}), 450);
+      const tones = { soft: [523], chime: [660, 880], bell: [880, 1175, 880] }[toolSettings.soundPattern] || [660, 880];
+      const level = Math.max(0.005, Math.min(0.18, Number(toolSettings.soundVolume ?? 35) / 100 * 0.18));
+      const startAt = context.currentTime + 0.015;
+      tones.forEach((frequency, index) => {
+        const oscillator = context.createOscillator(), volume = context.createGain();
+        const begins = startAt + index * 0.14;
+        oscillator.type = "sine"; oscillator.frequency.setValueAtTime(frequency, begins);
+        volume.gain.setValueAtTime(0.0001, begins);
+        volume.gain.exponentialRampToValueAtTime(level, begins + 0.025);
+        volume.gain.exponentialRampToValueAtTime(0.0001, begins + 0.18);
+        oscillator.connect(volume); volume.connect(context.destination);
+        oscillator.start(begins); oscillator.stop(begins + 0.2);
+      });
+      setTimeout(() => context.close().catch(() => {}), tones.length * 160 + 350);
     } catch {}
+  }
+  function markTabTitle() {
+    if (!document.hidden || toolSettings.tabTitleAlert === false) return;
+    const title = document.title.replace(/^🔔\s*/, "");
+    document.title = `🔔 ${title}`;
+    clearTimeout(titleRestoreTimer);
+    titleRestoreTimer = setTimeout(() => { document.title = document.title.replace(/^🔔\s*/, ""); }, 12000);
+  }
+  function updateComposerCount(value, form) {
+    const counter = form?.querySelector(".cc-live-counter");
+    if (!counter) return;
+    const text = String(value || "");
+    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+    const sentences = text.split(/[.!?。！？]+/).filter((part) => part.trim()).length;
+    const readingMinutes = words ? Math.max(1, Math.ceil(words / 220)) : 0;
+    counter.textContent = `${words} sözcük · ${text.length} karakter · ${sentences} cümle · ~${readingMinutes} dk okuma`;
   }
   function findChatSidebar() {
     return [...document.querySelectorAll("aside,[role='complementary'],nav")]
@@ -125,7 +146,9 @@
       const id = wrapper.getAttribute("data-message-id");
       const existing = labels.find((item) => item.conversationId === CC.adapter.getCurrentConversationId() && item.messageId === id);
       if (existing && !wrapper.querySelector(":scope > .cc-message-label")) {
-        const pill = document.createElement("span"); pill.className = "cc-message-label"; pill.textContent = existing.text; wrapper.prepend(pill);
+        const pill = document.createElement("span"); pill.className = "cc-message-label"; pill.textContent = existing.text; pill.style.setProperty("--message-label-color", existing.color || "#c6a0f6");
+        if (existing.note) pill.title = existing.note;
+        wrapper.prepend(pill);
       }
       if (labels.some((item) => item.conversationId === CC.adapter.getCurrentConversationId() && item.messageId === id)) label.textContent = "Etiket ✓";
     }).catch(() => {});
@@ -142,7 +165,11 @@
     const form = input.closest("form") || input.parentElement;
     if (!form) return;
     if (toolSettings.contextEstimate !== false && !form.querySelector(":scope > .cc-context-meter")) {
-      const meter = document.createElement("div"); meter.className = "cc-context-meter"; meter.textContent = "Bağlam: yaklaşık 0 token";
+      const meter = document.createElement("div"); meter.className = "cc-context-meter";
+      const track = document.createElement("span"); track.className = "cc-context-track";
+      const fill = document.createElement("i"); fill.className = "cc-context-fill"; track.append(fill);
+      const caption = document.createElement("span"); caption.className = "cc-context-caption"; caption.textContent = "Bağlam tahmini yükleniyor…";
+      meter.append(track, caption); meter.title = "Yaklaşık karakter tabanlı hesap; ChatGPT'nin gizli talimatları ve gerçek token sayısı görülmez.";
       form.append(meter);
     }
     if (toolSettings.contextEstimate === false) form.querySelector(".cc-context-meter")?.remove();
@@ -151,10 +178,7 @@
       form.append(counter);
     }
     if (toolSettings.wordCounter === false) form.querySelector(".cc-live-counter")?.remove();
-    const current = CC.prompts.readComposer();
-    const words = current.trim() ? current.trim().split(/\s+/).length : 0;
-    const counter = toolSettings.wordCounter === false ? null : form.querySelector(".cc-live-counter");
-    if (counter) counter.textContent = `${words} sözcük · ${current.length} karakter`;
+    updateComposerCount(CC.prompts.readComposer(), form);
   }
 
   async function updateContextMeter() {
@@ -165,8 +189,12 @@
     if (!meter) return;
     const text = [...document.querySelectorAll('[data-message-author-role]')].map((node) => node.innerText || "").join(" ");
     const tokens = Math.ceil(text.length / 4);
-    const nextText = `Bağlam tahmini: ~${tokens.toLocaleString("tr-TR")} token · görünen iletiler`;
-    if (meter.textContent !== nextText) meter.textContent = nextText;
+    const target = Math.max(1000, Number(settings.contextTarget) || 128000);
+    const percent = Math.min(100, Math.round(tokens / target * 100));
+    const fill = meter.querySelector(".cc-context-fill"), caption = meter.querySelector(".cc-context-caption");
+    if (fill) fill.style.width = `${percent}%`;
+    const messageCount = document.querySelectorAll('[data-message-author-role]').length;
+    if (caption) caption.textContent = `Bağlam tahmini: ~${tokens.toLocaleString("tr-TR")} / ${target.toLocaleString("tr-TR")} token · yaklaşık %${percent} · ${messageCount} görünür ileti`;
   }
 
   function handleComposerInput(event) {
@@ -174,8 +202,7 @@
     if (!input.matches?.('textarea,[contenteditable="true"],[role="textbox"]')) return;
     const value = input.isContentEditable ? input.innerText || "" : input.value || "";
     const form = input.closest("form") || input.parentElement;
-    const counter = form?.querySelector(".cc-live-counter");
-    if (counter) counter.textContent = `${value.trim() ? value.trim().split(/\s+/).length : 0} sözcük · ${value.length} karakter`;
+    updateComposerCount(value, form);
     if (value.endsWith("//")) {
       CC.prompts.writeComposer(value.slice(0, -2)); CC.prompts.openPicker();
     } else if (value.endsWith("@@")) {
@@ -192,6 +219,7 @@
 
   CC.pageTools = {
     refreshFolders() { return renderNativeFolderTree(true); },
+    previewSound() { playCompletionSound(); },
     init() {
       if (initialized) return;
       initialized = true;
@@ -200,7 +228,10 @@
         clearTimeout(scanTimer);
         scanTimer = setTimeout(() => {
           const generating = isGenerating();
-          if (generationStateKnown && wasGenerating && !generating && toolSettings.soundAlert) playCompletionSound();
+          if (generationStateKnown && wasGenerating && !generating) {
+            if (toolSettings.soundAlert && (toolSettings.alertOnlyBackground === false || document.hidden)) playCompletionSound();
+            markTabTitle();
+          }
           generationStateKnown = true; wasGenerating = generating;
           for (const node of document.querySelectorAll('[data-message-author-role]')) addMessageTools(node);
           attachComposerTools(); updateContextMeter().catch(() => {});
@@ -211,6 +242,11 @@
       observer = new MutationObserver(scan);
       observer.observe(document.documentElement, { childList: true, subtree: true });
       document.addEventListener("input", handleComposerInput, true);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && document.title.startsWith("🔔 ")) {
+          clearTimeout(titleRestoreTimer); document.title = document.title.replace(/^🔔\s*/, "");
+        }
+      });
       for (const eventName of ["pointerdown", "keydown", "scroll"]) document.addEventListener(eventName, () => { lastInteractionAt = Date.now(); }, { passive: true, capture: true });
       document.addEventListener("cc:settings-changed", (event) => { toolSettings = { ...toolSettings, ...(event.detail || {}) }; scan(); });
       window.addEventListener("popstate", () => { baselineCurrentMessages(); });

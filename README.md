@@ -2,7 +2,7 @@
 
 **A free, open-source Chrome extension for organizing ChatGPT conversations.** Create folders and tags, search indexed messages, archive or restore chats, manage bookmarks, and export your data from a local panel on ChatGPT.
 
-**Status: preview release (0.5.0).** ChatGPT account actions depend on undocumented endpoints and may fail when ChatGPT changes its interface. Permanent deletion is irreversible; do not treat Companion as a backup.
+**Status: preview release (0.6.0).** ChatGPT account actions depend on undocumented endpoints and may fail when ChatGPT changes its interface. Permanent deletion is irreversible; do not treat Companion as a backup.
 
 The extension runs on `chatgpt.com`. It has no Companion server, analytics, or cloud sync. ChatGPT conversation content indexed for search is kept in your browser profile. Read the [privacy details](PRIVACY.md) before enabling full-text indexing.
 
@@ -21,15 +21,15 @@ Project page: [English](https://ersagun.com.tr/en/lab/chatgpt-companion/) · [T�
 
 ## Features
 
-- **Conversation management:** page through the active and archived conversation catalogs available to your signed-in ChatGPT session; filter, sort, pin, select, archive, restore, or delete chats.
+- **Conversation management:** page through the active and archived conversation catalogs available to your signed-in ChatGPT session; filter, sort, rename, pin, select, archive, restore, or delete chats.
 - **Folders and tags:** nested, colored folders, shortcuts in the ChatGPT sidebar, manual tags, and keyword-based tag rules.
-- **Full-text search:** index conversation messages locally, then search by phrase, speaker, date, included/excluded terms, and chat. Open matching messages and apply supported bulk actions.
-- **Exports and backup:** download one conversation as TXT, Markdown, or JSON; export selected conversations as ZIP; back up and restore Companion settings and organization data.
+- **Full-text search:** index conversation messages locally, then search by phrase, speaker, date, included/excluded terms, and chat. Open matching messages and apply supported bulk actions. Search the open chat directly with `Alt+Shift+F`.
+- **Exports and backup:** download one conversation as TXT, Markdown, JSON, or CSV; export selected conversations as ZIP in those formats; back up and restore Companion settings and organization data.
 - **Prompt library:** save reusable prompts, use variable templates, and create up to ten-step prompt chains.
-- **Bookmarks and message tools:** bookmark messages, add notes and labels, collapse long messages, estimate visible text size, read answers with a browser voice, and download attached audio when available.
+- **Bookmarks and message tools:** bookmark messages with notes and colors; add searchable, colored message labels with notes; collapse long messages; estimate visible text size; read answers with a browser voice; and download attached audio when available.
 - **Media gallery:** find image links in indexed conversations, favorite them, and download accessible images as a ZIP.
 - **Usage summary:** show messages and activity observed while Companion is enabled in this browser.
-- **Companion controls:** command palette (`Ctrl+K` / `⌘K`), dark/light/ocean themes, and compact layouts.
+- **In-chat tools:** a floating quick-action menu, command palette (`Ctrl+K` / `⌘K`), configurable panel size, accent color, text size and density, live word/character/sentence/reading-time counts, an approximate context meter, and configurable background completion alerts.
 
 The extension does not promise access to chats that ChatGPT does not expose to your current session. ChatGPT can change its private interface endpoints, which may temporarily disable history loading or actions. Companion reports failed actions instead of marking them complete. Deleting a chat from ChatGPT is permanent and cannot be undone.
 
@@ -55,7 +55,7 @@ History catalog loading and message indexing are separate. Loading the catalog d
 - Companion stores settings, folders, tags, prompts, bookmarks, usage summaries, and chat metadata in Chrome’s local extension storage. Full-text conversation records are stored in local IndexedDB.
 - Companion does not add application-level encryption to local storage. Anyone with access to the Windows account or Chrome profile on this device may be able to read the indexed conversation data. Avoid full-text indexing on shared or untrusted devices.
 - Companion does not operate a server and does not send your conversations to its maintainers, GitHub, an analytics provider, or a cloud-sync service.
-- To load history, read conversations, or perform account actions, Companion makes requests to ChatGPT using your existing signed-in session. It does not save the session token in Companion storage.
+- To load history, read conversations, rename or perform other account actions, Companion makes requests to ChatGPT using your existing signed-in session. It does not save the session token in Companion storage.
 - When the media gallery displays image previews or you download media/audio, your browser requests the original URLs contained in ChatGPT messages. Cross-origin media requests omit credentials and referrer information; the remote media host can still receive the request and your network address.
 - Companion’s JSON backup excludes the full-text message index. Clear the index or all extension data in **Settings**. Clearing Companion data does not delete chats from ChatGPT.
 
@@ -68,7 +68,7 @@ See [PRIVACY.md](PRIVACY.md) for the full disclosure.
 - Conversation exports include text, timestamps, and links. Attachments are not embedded automatically. The media gallery can download accessible image links separately.
 - Speech playback uses voices installed in the browser. It does not generate downloadable MP3 files or provide a fixed set of voice packs.
 - Usage summaries count activity observed by Companion; they are not ChatGPT account quotas or official usage limits.
-- There is no cloud sync or PDF export.
+- There is no cloud sync, PDF export, separate team service, or support for Claude, Gemini, or Grok. The context meter is a character-based estimate against a user-selected target, not the model's verified context limit. AI Toolbox features that rely on a paid account, cross-provider access, or its team/cloud service are outside this ChatGPT-only local extension.
 
 ## License
 
@@ -84,14 +84,17 @@ Eklenti yalnızca `chatgpt.com` üzerinde çalışır. Companion sunucusu, anali
 
 ### Öne çıkanlar
 
-- **Sohbet yönetimi:** Oturumunuzda erişilebilen etkin ve arşivlenmiş sohbet kataloglarını sayfa sayfa yükleme, filtreleme, sıralama, sabitleme, seçme, arşivleme, arşivden çıkarma ve silme.
+- **Sohbet yönetimi:** Oturumunuzda erişilebilen etkin ve arşivlenmiş sohbet kataloglarını sayfa sayfa yükleme, filtreleme, sıralama, yeniden adlandırma, sabitleme, seçme, arşivleme, arşivden çıkarma ve silme.
 - **Klasör ve etiketler:** İç içe ve renkli klasörler, kenar çubuğu kısayolları, elle etiketleme ve anahtar sözcüğe göre etiket kuralları.
-- **Tam metin arama:** Mesajları yerel olarak dizine alma; ifade, konuşmacı, tarih ve zorunlu/istenmeyen sözcüklerle arama.
-- **Dışa aktarma ve yedek:** Tek sohbeti TXT, Markdown veya JSON; seçili sohbetleri ZIP indirme. Companion ayarlarını ve düzenleme bilgilerini yedekleyip geri yükleme.
+- **Tam metin arama:** Mesajları yerel olarak dizine alma; ifade, konuşmacı, tarih ve zorunlu/istenmeyen sözcüklerle arama. `Alt+Shift+F` açık sohbette arama panelini açar.
+- **Dışa aktarma ve yedek:** Tek sohbeti TXT, Markdown, JSON veya CSV; seçili sohbetleri bu biçimlerde ZIP indirme. Companion ayarlarını ve düzenleme bilgilerini yedekleyip geri yükleme.
 - **İstem kütüphanesi:** Değişkenli istem şablonları ve on adıma kadar istem zincirleri.
-- **Mesaj araçları:** Yer imleri, notlar, etiketler, uzun iletileri daraltma, tarayıcı sesiyle okutma ve varsa ekli sesi indirme.
+- **Mesaj araçları:** Renkli notlu yer imleri ve aratılabilir renkli mesaj etiketleri, uzun iletileri daraltma, tarayıcı sesiyle okutma ve varsa ekli sesi indirme.
 - **Medya galerisi:** Dizine alınmış sohbetlerde görsel bağlantılarını bulma ve erişilebilenleri ZIP olarak indirme.
-- **Kullanım özeti ve arayüz:** Eklenti açıkken gözlemlenen etkinlik özeti, `Ctrl+K` / `⌘K` komut paleti, üç tema ve dar ekran düzeni.
+- **Sohbet içi araçlar:** Hızlı işlem menüsü, `Ctrl+K` / `⌘K` komut paleti, panel boyutu, vurgu rengi, yazı boyutu ve liste yoğunluğu ayarları; canlı sözcük/karakter/cümle/okuma süresi sayacı, yaklaşık bağlam ölçeri ve arka plan yanıt uyarıları.
+- **Kullanım özeti:** Eklenti açıkken bu tarayıcıda gözlemlenen etkinlik.
+
+Bağlam ölçeri karakter sayısından yaklaşık sonuç verir ve seçtiğiniz hedefle karşılaştırır; modelin gerçek sınırını göstermez. Eklenti MP3 sesi üretmez, PDF indirmez, Claude/Gemini/Grok'u desteklemez ve ücretli ekip/bulut servisleri sunmaz.
 
 ### Chrome'a kurulum
 

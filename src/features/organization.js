@@ -41,6 +41,18 @@
     return visibleChats(mode, collected);
   }
 
+  async function renameChat(chat) {
+    const title = await CC.ui.prompt("Sohbet adını değiştir", "Yeni ad ChatGPT hesabınızdaki sohbet başlığına uygulanır.", chat.title || "");
+    if (title === null || !title.trim() || title.trim() === chat.title) return;
+    const result = await CC.adapter.renameConversation(chat.id, title.trim());
+    if (!result.ok) return CC.ui.toast(result.reason || "Sohbet adı değiştirilemedi.", "error");
+    const catalog = await CC.repository.getHistoryCatalog();
+    const saved = catalog.find((item) => item.id === chat.id) || { id: chat.id, url: chat.url || `/c/${encodeURIComponent(chat.id)}` };
+    await CC.repository.saveHistoryCatalog([{ ...saved, title: result.title, updatedAt: new Date().toISOString() }]);
+    CC.ui.toast("Sohbet adı değiştirildi.");
+    await CC.ui.render("manage");
+  }
+
   async function manageSelectedChats(ids, action, archiveStates = {}) {
     if (!ids.length) { CC.ui.toast("Önce en az bir sohbet seçin.", "error"); return; }
     if (action === "delete") {
@@ -86,7 +98,7 @@
     if (CC.state.panel && !CC.state.panel.hidden) await CC.ui.render("manage");
   }
 
-  CC.organization = { visibleChats, loadChats, manageSelectedChats, continueJob, stopJob };
+  CC.organization = { visibleChats, loadChats, manageSelectedChats, continueJob, stopJob, renameChat };
 
   CC.features.register({ id: "home", titleKey: "home", render(container) {
     container.append(el("h2", { text: "ChatGPT sohbetlerinizi yönetin" }));
@@ -94,7 +106,7 @@
     for (const [view, title, description] of [
       ["manage", "Sohbetleri yönet", "Etkin ve erişilebilir arşivlenmiş sohbetleri seçin."],
       ["organize", "Klasörler ve etiketler", "Kişisel klasörler oluşturup sohbetlere atayın."],
-      ["export", "Dışa aktar", "Açık sohbeti TXT, Markdown veya JSON olarak kaydedin."]
+      ["export", "Dışa aktar", "Açık sohbeti TXT, Markdown, JSON veya CSV olarak kaydedin."]
     ]) {
       const card = el("button", { class: "cc-card", type: "button", onclick: () => CC.ui.open(view) });
       card.append(el("strong", { text: title }), el("div", { class: "cc-item-meta", text: description }));
@@ -137,7 +149,7 @@
     const unarchive = el("button", { class: "cc-button cc-small", text: "Arşivden çıkar" });
     const remove = el("button", { class: "cc-button cc-danger cc-small", text: "Sil" });
     const zipFormat = el("select", { class: "cc-select cc-zip-format", "aria-label": "ZIP dosya biçimi" });
-    zipFormat.append(el("option", { value: "zip", text: "ZIP · Markdown" }), el("option", { value: "zip-text", text: "ZIP · TXT" }), el("option", { value: "zip-json", text: "ZIP · JSON" }));
+    zipFormat.append(el("option", { value: "zip", text: "ZIP · Markdown" }), el("option", { value: "zip-text", text: "ZIP · TXT" }), el("option", { value: "zip-json", text: "ZIP · JSON" }), el("option", { value: "zip-csv", text: "ZIP · CSV" }));
     const exportZip = el("button", { class: "cc-button cc-small", text: "ZIP dışa aktar" });
     const pinSelected = el("button", { class: "cc-button cc-small", text: "Sabitle / kaldır" });
     const folderSelect = el("select", { class: "cc-select", "aria-label": "Seçili sohbetleri klasöre taşı" });
@@ -262,7 +274,7 @@
         return;
       }
       for (const chat of currentPageChats) {
-        const row = el("label", { class: "cc-item" });
+        const row = el("article", { class: "cc-item" });
         const check = el("input", { type: "checkbox", checked: selected.has(chat.id), "aria-label": `${chat.title} seç` });
         check.addEventListener("change", () => { check.checked ? selected.add(chat.id) : selected.delete(chat.id); draw(); });
         const main = el("span", { class: "cc-item-main" });
@@ -280,7 +292,8 @@
           return badge;
         });
         main.append(title, el("span", { class: "cc-folder-badges" }, [...(folderBadges.length ? folderBadges : [el("span", { class: "cc-item-meta", text: "Klasörsüz" })]), ageBadge]), el("span", { class: "cc-item-meta", text: [...tags, archiveLabel, chat.catalogued ? "Eklentide kayıtlı" : ""].filter(Boolean).join(" · ") }));
-        row.append(check, main);
+        const rename = el("button", { class: "cc-button cc-small cc-quiet cc-chat-rename", type: "button", text: "Adını değiştir", "aria-label": `${chat.title} sohbetinin adını değiştir`, onclick: () => renameChat(chat) });
+        row.append(check, main, rename);
         list.append(row);
       }
     }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 Preview — 2026-10-28
+
+- Added ChatGPT conversation renaming from the local conversation manager.
+- Added CSV export for a single conversation and ZIP exports of selected conversations.
+- Added a searchable message-label dashboard with colored labels and notes.
+- Added direct indexing and search for the open conversation (`Alt+Shift+F`).
+- Added floating quick actions, panel appearance controls, expanded live writing counts, an approximate adjustable context meter, and configurable background completion alerts.
+- Updated privacy and feature-scope documentation. The extension still stores data locally and uses no Companion server or cloud sync.
+
 ## 0.5.0 Preview — 2026-10-27
 
 - Initial public release of the ChatGPT Companion Chrome extension.

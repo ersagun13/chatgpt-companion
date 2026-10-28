@@ -1,7 +1,7 @@
 globalThis.CC_LOCALES = globalThis.CC_LOCALES || {};
 globalThis.CC_LOCALES.tr = {
   appName: "ChatGPT Companion", open: "Aç", close: "Kapat", home: "Araçlar", search: "Sohbet ara",
-  manage: "Sohbetleri yönet", organize: "Klasörler ve etiketler", prompts: "İstemler", bookmarks: "Yer imleri",
+  manage: "Sohbetleri yönet", organize: "Klasörler ve etiketler", prompts: "İstemler", bookmarks: "Yer imleri", labels: "Mesaj etiketleri",
   media: "Görseller", insights: "Kullanım", appearance: "Görünüm", settings: "Ayarlar", loading: "Yükleniyor…",
   unsupported: "Bu özellik ChatGPT sayfasında şu anda kullanılamıyor.", localOnly: "Verileriniz bu cihazda kalır.",
   startIndex: "Sohbetleri dizine ekle", stopIndex: "Durdur", clearIndex: "Yerel dizini temizle", searchPlaceholder: "Sohbetlerde ara…",
